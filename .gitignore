@@ -31,6 +31,9 @@ frontend/.vite/
 .DS_Store
 Thumbs.db
 
+# Backup
+*.bak
+
 # Config with secrets
 *.local.yaml
 .env
