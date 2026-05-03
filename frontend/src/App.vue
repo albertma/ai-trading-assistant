@@ -69,11 +69,21 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, provide } from 'vue'
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
-const pageTitle = computed(() => route.meta?.title || 'AI投研助手')
+const stockName = ref('')
+const stockCode = ref('')
+provide('stockName', stockName)
+provide('stockCode', stockCode)
+const pageTitle = computed(() => {
+    const base = route.meta?.title || 'AI投研助手'
+    if (stockName.value && stockCode.value) {
+        return `${base} - ${stockName.value}(${stockCode.value})`
+    }
+    return base
+})
 </script>
 
 <style>

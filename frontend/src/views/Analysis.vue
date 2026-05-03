@@ -208,9 +208,262 @@
                             <el-divider v-if="i < fundData.revenue_breakdown.length - 1" />
                         </div>
                     </el-card>
+                    <!-- 详细财报（内嵌） -->
+                    <template v-if="statementsData">
+                        <!-- 三张报表 -->
+                        <el-card shadow="hover" style="margin-bottom:16px;">
+                            <template #header>
+                                <b>📄 三张财务报表</b>
+                                <el-button size="small" type="primary" plain style="float:right;" @click="statementsVisible = true">全屏查看</el-button>
+                            </template>
+                            <el-tabs type="border-card">
+                                <el-tab-pane label="📊 利润表">
+                                    <el-table :data="statementsData.profit_sheet || []" border size="small" style="width:100%"
+                                        :default-sort="{ prop: 'period', order: 'descending' }" max-height="350">
+                                        <el-table-column prop="period" label="报告期" width="110" sortable fixed />
+                                        <el-table-column v-for="col in getStatementFields('profit_sheet')" :key="col" :label="col" width="120">
+                                            <template #default="{ row }">{{ formatVal(row.items?.[col]) }}</template>
+                                        </el-table-column>
+                                    </el-table>
+                                </el-tab-pane>
+                                <el-tab-pane label="🏛️ 资产负债表">
+                                    <el-table :data="statementsData.balance_sheet || []" border size="small" style="width:100%"
+                                        :default-sort="{ prop: 'period', order: 'descending' }" max-height="350">
+                                        <el-table-column prop="period" label="报告期" width="110" sortable fixed />
+                                        <el-table-column v-for="col in getStatementFields('balance_sheet')" :key="col" :label="col" width="120">
+                                            <template #default="{ row }">{{ formatVal(row.items?.[col]) }}</template>
+                                        </el-table-column>
+                                    </el-table>
+                                </el-tab-pane>
+                                <el-tab-pane label="💵 现金流量表">
+                                    <el-table :data="statementsData.cash_flow || []" border size="small" style="width:100%"
+                                        :default-sort="{ prop: 'period', order: 'descending' }" max-height="350">
+                                        <el-table-column prop="period" label="报告期" width="110" sortable fixed />
+                                        <el-table-column v-for="col in getStatementFields('cash_flow')" :key="col" :label="col" width="140">
+                                            <template #default="{ row }">{{ formatVal(row.items?.[col]) }}</template>
+                                        </el-table-column>
+                                    </el-table>
+                                </el-tab-pane>
+                            </el-tabs>
+                        </el-card>
+                    </template>
                 </template>
                 <el-empty v-else-if="!fundLoading" description="暂无基本面数据" />
                 <div v-else style="text-align:center;padding:40px;color:#909399;">加载中...</div>
+            </el-tab-pane>
+
+            <!-- Tab 3c: 综合评估（6大维度+同行对比+管理层） -->
+            <el-tab-pane label="🎯 综合评估" name="comprehensive">
+                <div v-if="comprehensiveLoading" style="text-align:center;padding:40px;">
+                    <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+                    <p style="color:#909399;margin-top:8px;">加载综合评估...</p>
+                </div>
+                <template v-else-if="comprehensiveData">
+                    <!-- 总分 -->
+                    <el-card shadow="hover" style="margin-bottom:16px;border:1px solid #334;"
+                        :style="{ background: comprehensiveData.total_pct >= 65 ? 'linear-gradient(135deg, #1a2e1a, #1a1a2e)' : comprehensiveData.total_pct >= 45 ? 'linear-gradient(135deg, #2e2a1a, #1a1a2e)' : 'linear-gradient(135deg, #2e1a1a, #1a1a2e)' }">
+                        <div style="display:flex;align-items:center;justify-content:space-between;">
+                            <div style="display:flex;align-items:center;gap:12px;">
+                                <span style="font-size:32px;">{{ comprehensiveData.total_pct >= 65 ? '🟢' : comprehensiveData.total_pct >= 45 ? '🟠' : '🔴' }}</span>
+                                <div>
+                                    <span style="font-size:20px;font-weight:bold;color:#e0e0e0;">综合基本面评分</span>
+                                    <span style="font-size:28px;font-weight:bold;margin-left:12px;color:#409eff;">{{ comprehensiveData.total_score }}</span>
+                                    <span style="color:#909399;font-size:14px;">/ {{ comprehensiveData.total_max }}</span>
+                                </div>
+                                <el-tag v-if="comprehensiveData.industry" type="info" size="small" style="margin-left:8px;">{{ comprehensiveData.industry }}</el-tag>
+                            </div>
+                            <div style="font-size:28px;font-weight:bold;color:#e0e0e0;">{{ comprehensiveData.total_pct }}%</div>
+                        </div>
+                    </el-card>
+
+                    <!-- 6大维度卡片 -->
+                    <el-row :gutter="12" style="margin-bottom:16px;">
+                        <el-col :span="8" v-for="dim in comprehensiveData.dimensions" :key="dim.key" style="margin-bottom:12px;">
+                            <el-card shadow="hover" style="height:100%;border:1px solid #2a2a3e;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                                    <span style="font-size:14px;font-weight:bold;color:#ccc;">{{ dim.icon }} {{ dim.name }}</span>
+                                    <span :style="{ color: dim.score >= dim.max*0.65 ? '#67c23a' : dim.score >= dim.max*0.45 ? '#e6a23c' : '#f56c6c', fontWeight:'bold', fontSize:'16px' }">
+                                        {{ dim.score }}/{{ dim.max }}
+                                    </span>
+                                </div>
+                                <div style="height:5px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;margin-bottom:10px;">
+                                    <div :style="{ width: (dim.score/dim.max*100)+'%', height:'5px', background: dim.score >= dim.max*0.65 ? '#67c23a' : dim.score >= dim.max*0.45 ? '#e6a23c' : '#f56c6c', borderRadius:'3px' }"></div>
+                                </div>
+                                <div v-for="(item, ii) in dim.items" :key="ii" style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;font-size:12px;border-bottom:1px solid rgba(255,255,255,0.04);">
+                                    <span style="color:#909399;">{{ item.label }}</span>
+                                    <div>
+                                        <span style="color:#e0e0e0;font-weight:bold;margin-right:6px;">{{ item.value }}</span>
+                                        <el-tag :type="item.score >= item.max*0.65 ? 'success' : item.score >= item.max*0.45 ? 'warning' : 'danger'" size="small" style="font-size:10px;">
+                                            {{ item.verdict }}
+                                        </el-tag>
+                                    </div>
+                                </div>
+                            </el-card>
+                        </el-col>
+                    </el-row>
+
+                    <!-- 同行对比 -->
+                    <el-card v-if="comprehensiveData.peer_comparison?.comparisons?.length" shadow="hover" style="margin-bottom:16px;">
+                        <template #header>
+                            <b>🤝 同行对比</b>
+                            <span style="float:right;font-size:12px;color:#909399;">
+                                报告期: {{ comprehensiveData.peer_comparison.raw_report?.报告期 || '--' }}
+                            </span>
+                        </template>
+                        <!-- 原始报表数据验证 -->
+                        <el-collapse style="margin-bottom:12px;">
+                            <el-collapse-item title="📋 原始报表数据（亿元）" name="raw">
+                                <el-table :data="rawReportRows(comprehensiveData.peer_comparison.raw_report)" border size="small" style="width:100%" max-height="300">
+                                    <el-table-column prop="item" label="项目" width="100" />
+                                    <el-table-column prop="value" label="数值(亿)" width="100">
+                                        <template #default="{ row }">
+                                            <span v-if="row.value != null">{{ row.value }}</span>
+                                            <span v-else style="color:#909399;">--</span>
+                                        </template>
+                                    </el-table-column>
+                                    <el-table-column prop="source" label="来源" width="80" />
+                                    <el-table-column prop="desc" label="说明" min-width="200" />
+                                </el-table>
+                            </el-collapse-item>
+                        </el-collapse>
+                        <el-table :data="comprehensiveData.peer_comparison.comparisons" border size="small" style="width:100%">
+                            <el-table-column label="指标" width="100">
+                                <template #default="{ row }">{{ row.label }}</template>
+                            </el-table-column>
+                            <el-table-column label="类别" width="70">
+                                <template #default="{ row }">
+                                    <el-tag size="small" :type="row.category === 'profitability' ? 'success' : row.category === 'growth' ? 'warning' : row.category === 'cashflow' ? 'info' : row.category === 'operations' ? 'primary' : 'danger'">
+                                        {{ {growth:'成长',profitability:'盈利',cashflow:'现金',operations:'运营',solvency:'偿债'}[row.category] || row.category }}
+                                    </el-tag>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="本股" width="70">
+                                <template #default="{ row }">{{ row.company }}{{ row.unit }}</template>
+                            </el-table-column>
+                            <el-table-column label="行业均值" width="80">
+                                <template #default="{ row }">{{ row.peer_avg }}{{ row.unit }}</template>
+                            </el-table-column>
+                            <el-table-column label="差值" width="80">
+                                <template #default="{ row }">
+                                    <span :style="{ color: row.better ? '#67c23a' : '#f56c6c' }">{{ row.diff > 0 ? '+': '' }}{{ row.diff }}{{ row.unit }}</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="结论" width="90">
+                                <template #default="{ row }">
+                                    <el-tag :type="row.better ? 'success' : 'danger'" size="small">{{ row.verdict }}</el-tag>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="计算公式（原始数据验证）" min-width="300">
+                                <template #default="{ row }">
+                                    <span v-if="row.raw_calc" style="font-size:11px;color:#909399;font-family:monospace;">{{ row.raw_calc }}</span>
+                                    <span v-else style="color:#909399;font-size:11px;">--</span>
+                                </template>
+                            </el-table-column>
+                        </el-table>
+                    </el-card>
+
+                    <!-- 管理层分析 -->
+                    <el-card v-if="comprehensiveData.management" shadow="hover" style="margin-bottom:16px;">
+                        <template #header><b>👔 管理层分析</b></template>
+                        <el-row :gutter="16">
+                            <el-col :span="12">
+                                <el-card shadow="never" style="background:rgba(255,255,255,0.03);">
+                                    <template #header><b style="font-size:13px;">🏢 主要股东（前10）</b></template>
+                                    <div v-for="(h, hi) in (comprehensiveData.management.top_holders || [])" :key="hi" style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px solid rgba(255,255,255,0.04);">
+                                        <span style="color:#909399;">{{ h.name }}</span>
+                                        <span style="color:#e0e0e0;font-weight:bold;">{{ h.ratio ? h.ratio + '%' : '--' }}</span>
+                                    </div>
+                                    <div v-if="comprehensiveData.management.total_holders" style="margin-top:8px;font-size:12px;color:#909399;">
+                                        股东总数: {{ comprehensiveData.management.total_holders.toLocaleString() }} 户
+                                    </div>
+                                </el-card>
+                            </el-col>
+                            <el-col :span="12">
+                                <el-card shadow="never" style="background:rgba(255,255,255,0.03);">
+                                    <template #header>
+                                        <b style="font-size:13px;">📋 高管持股变动</b>
+                                        <el-tag v-if="comprehensiveData.management.buy_total" size="small" type="success" style="margin-left:6px;">
+                                            共增持{{ comprehensiveData.management.buy_total }}万股
+                                        </el-tag>
+                                        <el-tag v-if="comprehensiveData.management.sell_total" size="small" type="danger" style="margin-left:4px;">
+                                            共减持{{ comprehensiveData.management.sell_total }}万股
+                                        </el-tag>
+                                    </template>
+                                    <div v-if="comprehensiveData.management.changes?.length">
+                                        <div v-for="(chg, ci) in comprehensiveData.management.changes.slice(0, 6)" :key="ci" style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;border-bottom:1px solid rgba(255,255,255,0.04);">
+                                            <span style="color:#909399;">{{ chg.date }} {{ chg.person }}</span>
+                                            <span>
+                                                <el-tag :type="chg.action.includes('增持') ? 'success' : 'danger'" size="small" style="font-size:10px;">{{ chg.action }}</el-tag>
+                                                <span style="color:#e0e0e0;margin-left:4px;">¥{{ chg.price }}</span>
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div v-else style="font-size:12px;color:#909399;padding:12px 0;">
+                                        {{ comprehensiveData.management.error || '暂无近期高管持股变动' }}
+                                    </div>
+                                </el-card>
+                            </el-col>
+                        </el-row>
+                    </el-card>
+
+                    <!-- 费用率分析 -->
+                    <el-card v-if="comprehensiveData.expense_analysis?.rows?.length" shadow="hover" style="margin-bottom:16px;">
+                        <template #header>
+                            <b>💰 费用率分析</b>
+                            <span style="font-size:12px;color:#909399;margin-left:8px;">
+                                <el-tag v-for="(note, ni) in (comprehensiveData.expense_analysis.summary||[])" :key="ni" size="small" :type="note.includes('下降')?'success':'warning'" style="margin-left:4px;">{{ note }}</el-tag>
+                            </span>
+                        </template>
+                        <el-table :data="comprehensiveData.expense_analysis.rows" border size="small" style="width:100%"
+                            :default-sort="{ prop: 'period', order: 'descending' }">
+                            <el-table-column prop="period" label="报告期" width="110" sortable />
+                            <el-table-column prop="revenue" label="营收(亿)" width="85">
+                                <template #default="{ row }">{{ row.revenue?.toFixed(1) }}</template>
+                            </el-table-column>
+                            <el-table-column label="销售费用率" width="85">
+                                <template #default="{ row }">
+                                    <span v-if="row.sale_ratio != null">{{ row.sale_ratio }}%</span>
+                                    <span v-else style="color:#c0c4cc;">--</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="管理费用率" width="85">
+                                <template #default="{ row }">
+                                    <span v-if="row.manage_ratio != null">{{ row.manage_ratio }}%</span>
+                                    <span v-else style="color:#c0c4cc;">--</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="研发费用率" width="85">
+                                <template #default="{ row }">
+                                    <span v-if="row.research_ratio != null">{{ row.research_ratio }}%</span>
+                                    <span v-else style="color:#c0c4cc;">--</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="财务费用率" width="85">
+                                <template #default="{ row }">
+                                    <span v-if="row.finance_ratio != null" :style="{ color: (row.finance_ratio||0) > 1 ? '#e6a23c' : '#909399' }">{{ row.finance_ratio }}%</span>
+                                    <span v-else style="color:#c0c4cc;">--</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="总成本率" width="80">
+                                <template #default="{ row }">
+                                    <span v-if="row.total_cost_ratio != null">{{ row.total_cost_ratio }}%</span>
+                                    <span v-else style="color:#c0c4cc;">--</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="费用yoy" width="120">
+                                <template #default="{ row }">
+                                    <span v-if="row.manage_yoy != null" :style="{ color: (row.manage_yoy||0) > 0 ? '#f56c6c' : '#67c23a', fontSize:'12px' }">
+                                        管理{{ row.manage_yoy > 0 ? '+' : '' }}{{ row.manage_yoy }}%
+                                    </span>
+                                    <span v-if="row.sale_yoy != null" :style="{ color: (row.sale_yoy||0) > 0 ? '#f56c6c' : '#67c23a', fontSize:'12px', marginLeft:'4px' }">
+                                        销售{{ row.sale_yoy > 0 ? '+' : '' }}{{ row.sale_yoy }}%
+                                    </span>
+                                </template>
+                            </el-table-column>
+                        </el-table>
+                    </el-card>
+                </template>
+                <el-empty v-else-if="!comprehensiveLoading" description="暂无综合评估数据" />
             </el-tab-pane>
 
             <!-- Tab 3b: 杜邦分析 -->
@@ -593,16 +846,109 @@
             </div>
         </Transition>
     </div>
+
+    <!-- 详细财报弹窗 -->
+    <el-dialog v-model="statementsVisible" title="📄 三张财务报表" width="90%" top="5vh"
+        :close-on-click-modal="false" @open="loadStatements">
+        <div v-if="statementsLoading" style="text-align:center;padding:40px;">
+            <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+            <p style="color:#909399;margin-top:8px;">加载财务报表...</p>
+        </div>
+        <template v-else-if="statementsData">
+            <!-- 财报健康评分卡 -->
+            <div v-if="statementsData.health_score" style="margin-bottom:16px;padding:16px;border-radius:8px;border:1px solid #334;"
+                :style="{ background: statementsData.health_score.total_pct >= 65 ? 'linear-gradient(135deg, #1a2e1a, #1a1a2e)' : statementsData.health_score.total_pct >= 45 ? 'linear-gradient(135deg, #2e2a1a, #1a1a2e)' : 'linear-gradient(135deg, #2e1a1a, #1a1a2e)' }">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+                    <div style="display:flex;align-items:center;gap:12px;">
+                        <span style="font-size:28px;">{{ statementsData.health_score.emoji }}</span>
+                        <div>
+                            <span style="font-size:20px;font-weight:bold;color:#e0e0e0;">财报健康评分</span>
+                            <span style="font-size:24px;font-weight:bold;margin-left:12px;color:#409eff;">{{ statementsData.health_score.total_score }}</span>
+                            <span style="color:#909399;font-size:14px;">/ {{ statementsData.health_score.total_max }}</span>
+                            <el-tag :type="statementsData.health_score.total_pct >= 65 ? 'success' : statementsData.health_score.total_pct >= 45 ? 'warning' : 'danger'"
+                                style="margin-left:8px;font-size:13px;font-weight:bold;">
+                                {{ statementsData.health_score.overall }}
+                            </el-tag>
+                        </div>
+                    </div>
+                    <div style="font-size:28px;font-weight:bold;color:#e0e0e0;">
+                        {{ statementsData.health_score.total_pct }}<span style="font-size:16px;color:#909399;">%</span>
+                    </div>
+                </div>
+                <!-- 各维度评分 -->
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px;">
+                    <div v-for="dim in statementsData.health_score.dimensions" :key="dim.name"
+                        style="background:rgba(255,255,255,0.04);border-radius:6px;padding:10px 12px;border:1px solid rgba(255,255,255,0.06);">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                            <span style="font-size:13px;color:#ccc;">{{ dim.icon }} {{ dim.name }}</span>
+                            <span :style="{ color: dim.score >= dim.max * 0.65 ? '#67c23a' : dim.score >= dim.max * 0.45 ? '#e6a23c' : '#f56c6c', fontWeight:'bold', fontSize:'14px' }">
+                                {{ dim.score }}/{{ dim.max }}
+                            </span>
+                        </div>
+                        <!-- 进度条 -->
+                        <div style="height:5px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;margin-bottom:6px;">
+                            <div :style="{ width: (dim.score/dim.max*100)+'%', height:'100%', background: dim.score >= dim.max * 0.65 ? '#67c23a' : dim.score >= dim.max * 0.45 ? '#e6a23c' : '#f56c6c', borderRadius:'3px', transition:'width 0.5s' }"></div>
+                        </div>
+                        <!-- 子项折叠 -->
+                        <div v-for="(d, di) in dim.details" :key="di" style="font-size:11px;color:#909399;margin-top:4px;padding:3px 4px;border-radius:3px;background:rgba(255,255,255,0.03);">
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <span>{{ d.item }}</span>
+                                <span :style="{ color: d.score >= d.max * 0.65 ? '#67c23a' : '#e6a23c', fontWeight:'bold' }">
+                                    {{ d.value }}
+                                </span>
+                            </div>
+                            <div style="font-size:10px;color:#666;line-height:1.4;">
+                                {{ d.desc }} → <span :style="{ color: d.score >= d.max * 0.65 ? '#67c23a' : d.score >= d.max * 0.45 ? '#e6a23c' : '#f56c6c' }">{{ d.verdict }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <el-tabs type="border-card">
+                <el-tab-pane label="📊 利润表">
+                    <el-table :data="statementsData.profit_sheet || []" border size="small" style="width:100%"
+                        :default-sort="{ prop: 'period', order: 'descending' }">
+                        <el-table-column prop="period" label="报告期" width="110" sortable fixed />
+                        <el-table-column v-for="col in getStatementFields('profit_sheet')" :key="col" :label="col" width="120">
+                            <template #default="{ row }">{{ formatVal(row.items?.[col]) }}</template>
+                        </el-table-column>
+                    </el-table>
+                </el-tab-pane>
+                <el-tab-pane label="🏛️ 资产负债表">
+                    <el-table :data="statementsData.balance_sheet || []" border size="small" style="width:100%"
+                        :default-sort="{ prop: 'period', order: 'descending' }">
+                        <el-table-column prop="period" label="报告期" width="110" sortable fixed />
+                        <el-table-column v-for="col in getStatementFields('balance_sheet')" :key="col" :label="col" width="120">
+                            <template #default="{ row }">{{ formatVal(row.items?.[col]) }}</template>
+                        </el-table-column>
+                    </el-table>
+                </el-tab-pane>
+                <el-tab-pane label="💵 现金流量表">
+                    <el-table :data="statementsData.cash_flow || []" border size="small" style="width:100%"
+                        :default-sort="{ prop: 'period', order: 'descending' }">
+                        <el-table-column prop="period" label="报告期" width="110" sortable fixed />
+                        <el-table-column v-for="col in getStatementFields('cash_flow')" :key="col" :label="col" width="140">
+                            <template #default="{ row }">{{ formatVal(row.items?.[col]) }}</template>
+                        </el-table-column>
+                    </el-table>
+                </el-tab-pane>
+            </el-tabs>
+        </template>
+        <el-empty v-else description="暂无财务报表数据" />
+    </el-dialog>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, watch, onBeforeUnmount } from 'vue'
-import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary } from '../api/index.js'
+import { ref, computed, onMounted, nextTick, watch, onBeforeUnmount, inject } from 'vue'
+import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary, getExpenseAnalysis, getFinancialStatements, getComprehensiveAnalysis } from '../api/index.js'
 import { ElMessage } from 'element-plus'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 
 const route = useRoute()
+const router = useRouter()
+const stockName = inject('stockName')
+const pageStockCode = inject('stockCode')
 
 const stockCode = ref('')
 const loading = ref(false)
@@ -619,6 +965,95 @@ const allFailedRules = computed(() => {
 
 const fundData = ref(null)
 const fundLoading = ref(false)
+const expenseData = ref(null)
+const expenseLoading = ref(false)
+const statementsVisible = ref(false)
+const statementsLoading = ref(false)
+const statementsData = ref(null)
+const comprehensiveData = ref(null)
+const comprehensiveLoading = ref(false)
+
+function rawReportRows(raw) {
+    if (!raw) return []
+    const map = [
+        { key: '报告期', item: '报告期', source: '--', desc: '财报截止日期' },
+        { key: '营业总收入', item: '营业收入', source: '利润表', desc: '净利润=营收-成本-费用' },
+        { key: '营业成本', item: '营业成本', source: '利润表', desc: '' },
+        { key: '净利润', item: '净利润', source: '利润表', desc: '归母+少数股东损益' },
+        { key: '归母净利润', item: '归母净利润', source: '利润表', desc: '归属母公司股东的利润' },
+        { key: '销售费用', item: '销售费用', source: '利润表', desc: '三项费用之一' },
+        { key: '管理费用', item: '管理费用', source: '利润表', desc: '三项费用之一' },
+        { key: '研发费用', item: '研发费用', source: '利润表', desc: '' },
+        { key: '财务费用', item: '财务费用', source: '利润表', desc: '三项费用之一' },
+        { key: '上期营收', item: '上期营收', source: '利润表', desc: '用于计算营收增长率' },
+        { key: '上期净利润', item: '上期净利润', source: '利润表', desc: '用于计算利润增长率' },
+        { key: '资产总计', item: '资产总计', source: '资产负债表', desc: '负债+股东权益' },
+        { key: '负债合计', item: '负债合计', source: '资产负债表', desc: '资产负债率=负债/资产' },
+        { key: '股东权益', item: '股东权益', source: '资产负债表', desc: 'ROE=净利润/股东权益' },
+        { key: '流动资产', item: '流动资产', source: '资产负债表', desc: '流动比率=流动资产/流动负债' },
+        { key: '流动负债', item: '流动负债', source: '资产负债表', desc: '' },
+        { key: '货币资金', item: '货币资金', source: '资产负债表', desc: '现金短债比=货币资金/短借' },
+        { key: '应收账款', item: '应收账款', source: '资产负债表', desc: '应收周转率=营收/应收' },
+        { key: '存货', item: '存货', source: '资产负债表', desc: '存货周转率=成本/存货' },
+        { key: '短期借款', item: '短期借款', source: '资产负债表', desc: '' },
+        { key: '长期借款', item: '长期借款', source: '资产负债表', desc: '' },
+        { key: '固定资产', item: '固定资产', source: '资产负债表', desc: '' },
+        { key: '经营现金流', item: '经营现金流', source: '现金流量表', desc: '造血能力、OCF/净利润比' },
+        { key: '投资现金流', item: '投资现金流', source: '现金流量表', desc: '负数=扩张投资' },
+        { key: '筹资现金流', item: '筹资现金流', source: '现金流量表', desc: '正数=借款/增发' },
+        { key: '销售毛利率', item: '毛利率 %', source: '财务摘要', desc: '(营收-成本)/营收' },
+        { key: '销售净利率', item: '净利率 %', source: '财务摘要', desc: '净利润/营收' },
+        { key: '净资产收益率_ROE', item: 'ROE %', source: '财务摘要', desc: '净利润/股东权益' },
+        { key: '资产负债率', item: '资产负债率 %', source: '财务摘要', desc: '负债/资产' },
+        { key: '基本每股收益', item: 'EPS', source: '财务摘要', desc: '元/股' },
+        { key: '每股净资产', item: '每股净资产', source: '财务摘要', desc: '元' },
+        { key: '每股经营现金流', item: '每股经营现金流', source: '财务摘要', desc: '元' },
+    ]
+    return map.map(m => ({ item: m.item, value: raw[m.key], source: m.source, desc: m.desc }))
+}
+
+function getStatementFields(type) {
+    const rows = statementsData.value?.[type] || []
+    if (!rows.length) return []
+    // Collect all unique field names across all periods
+    const fields = new Set()
+    rows.forEach(r => Object.keys(r.items || {}).forEach(k => fields.add(k)))
+    return Array.from(fields)
+}
+function formatVal(v) {
+    if (v == null || v === '' || v === '--') return '--'
+    if (typeof v === 'number') {
+        if (v >= 0) return v.toFixed(2)
+        return v.toFixed(2)
+    }
+    return v
+}
+async function loadStatements() {
+    const code = result.value?.code
+    if (!code || statementsData.value) return
+    statementsLoading.value = true
+    try {
+        const { data } = await getFinancialStatements(code)
+        statementsData.value = data
+    } catch (e) {
+        console.error('财报加载失败', e)
+    } finally {
+        statementsLoading.value = false
+    }
+}
+async function loadComprehensiveData() {
+    const code = result.value?.code
+    if (!code) return
+    comprehensiveLoading.value = true
+    try {
+        const { data } = await getComprehensiveAnalysis(code)
+        comprehensiveData.value = data
+    } catch (e) {
+        console.error('综合评估加载失败', e)
+    } finally {
+        comprehensiveLoading.value = false
+    }
+}
 const dupontData = ref(null)
 const dupontLoading = ref(false)
 const dupontCommentary = ref([])
@@ -841,6 +1276,21 @@ async function loadDupontData() {
     }
 }
 
+// ===== 费用分析 =====
+async function loadExpenseData() {
+    const code = result.value?.code
+    if (!code || expenseData.value) return
+    expenseLoading.value = true
+    try {
+        const { data } = await getExpenseAnalysis(code)
+        expenseData.value = data
+    } catch (e) {
+        console.error('费用分析加载失败', e)
+    } finally {
+        expenseLoading.value = false
+    }
+}
+
 // 监听tab切换到K线时加载图表
 watch(activeTab, (tab) => {
     if (tab === 'kline' && result.value?.code) {
@@ -848,6 +1298,12 @@ watch(activeTab, (tab) => {
     }
     if (tab === 'dupont' && result.value?.code && !dupontData.value) {
         nextTick(() => loadDupontData())
+    }
+    if (tab === 'comprehensive' && result.value?.code && !comprehensiveData.value) {
+        nextTick(() => loadComprehensiveData())
+    }
+    if (tab === 'fundamental' && result.value?.code && !expenseData.value) {
+        nextTick(() => loadExpenseData())
     }
 })
 // 分析结果加载后，如果K线tab正激活则自动渲染图表
@@ -858,6 +1314,14 @@ watch(result, (val) => {
     if (val?.code && activeTab.value === 'dupont' && !dupontData.value) {
         nextTick(() => loadDupontData())
     }
+    if (val?.code && activeTab.value === 'comprehensive' && !comprehensiveData.value) {
+        nextTick(() => loadComprehensiveData())
+    }
+    if (val?.code && activeTab.value === 'fundamental') {
+        nextTick(() => {
+            if (!fundData.value) loadFundamental(result.value?.code)
+        })
+    }
 })
 
 // 窗口resize自适应
@@ -867,6 +1331,12 @@ function onTabClick(tab) {
     }
     if (tab.props.name === 'dupont' && result.value?.code && !dupontData.value) {
         nextTick(() => loadDupontData())
+    }
+    if (tab.props.name === 'comprehensive' && result.value?.code && !comprehensiveData.value) {
+        nextTick(() => loadComprehensiveData())
+    }
+    if (tab.props.name === 'fundamental' && result.value?.code && !fundData.value) {
+        nextTick(() => loadFundamental(result.value.code))
     }
 }
 
@@ -903,6 +1373,8 @@ function handleSelect(item) {
     stockCode.value = item.code
 }
 
+let _internalNav = false
+
 // 支持从 URL 参数 ?code=XXXX 自动加载分析
 onMounted(() => {
     const code = route.query.code
@@ -912,19 +1384,38 @@ onMounted(() => {
     }
 })
 
+// 监听 URL 参数变化——处理浏览器前进后退、从其他页面跳转
+watch(() => route.query.code, (newCode) => {
+    if (_internalNav) { _internalNav = false; return }
+    if (!newCode) return
+    stockCode.value = newCode
+    search()
+})
+
 async function search() {
     const code = stockCode.value?.trim()
     if (!code) {
         ElMessage.warning('请输入股票代码')
         return
     }
+    // 同步URL参数，设置标记防止route watcher重复触发
+    _internalNav = true
+    router.replace({ query: { code } })
     loading.value = true
     result.value = null
     fundData.value = null
     archiveData.value = null
+    dupontData.value = null
+    expenseData.value = null
+    statementsData.value = null
+    comprehensiveData.value = null
     try {
         const { data } = await analyzeStock(code)
         result.value = data
+        // 更新页面标题
+        document.title = `${data.name} (${code}) - 个股分析 - AI投研助手`
+        stockName.value = data.name
+        pageStockCode.value = code
         // 并发加载基本面+档案
         loadFundamental(code)
         loadArchive(code)
@@ -968,8 +1459,12 @@ async function addToWatchlist() {
 async function loadFundamental(code) {
     fundLoading.value = true
     try {
-        const { data } = await getFundamental(code)
-        fundData.value = data
+        const [fundResp, stmtResp] = await Promise.all([
+            getFundamental(code),
+            getFinancialStatements(code),
+        ])
+        fundData.value = fundResp.data
+        statementsData.value = stmtResp.data
     } catch {} finally { fundLoading.value = false }
 }
 

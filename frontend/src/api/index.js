@@ -55,6 +55,15 @@ export function getDupontAnalysis(code) {
 export function getDupontCommentary(code) {
     return api.get(`/fundamental/dupont/${code}/commentary`)
 }
+export function getExpenseAnalysis(code) {
+    return api.get(`/fundamental/expense/${code}`)
+}
+export function getFinancialStatements(code) {
+    return api.get(`/fundamental/statements/${code}`)
+}
+export function getComprehensiveAnalysis(code) {
+    return api.get(`/fundamental/comprehensive/${code}`)
+}
 
 // ========== 档案 ==========
 export function getStockProfile(code) {
