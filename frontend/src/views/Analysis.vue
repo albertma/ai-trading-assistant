@@ -1591,6 +1591,7 @@ async function loadKlineChart() {
         const ma5 = calcSMA(closes, 5)
         const ma10 = calcSMA(closes, 10)
         const ma20 = calcSMA(closes, 20)
+        const ma30 = calcSMA(closes, 30)
         const ma60 = calcSMA(closes, 60)
 
         const { dif, dea, macd } = calcMACD(closes)
@@ -1678,20 +1679,29 @@ async function loadKlineChart() {
                 },
                 // MA5
                 { name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+                    color: '#e6a23c',
                     data: ma5, smooth: true, symbol: 'none',
-                    lineStyle: { width: 1, color: '#e6a23c' } },
+                    lineStyle: { width: 1.5, color: '#e6a23c' } },
                 // MA10
                 { name: 'MA10', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+                    color: '#409eff',
                     data: ma10, smooth: true, symbol: 'none',
-                    lineStyle: { width: 1, color: '#409eff' } },
+                    lineStyle: { width: 1.5, color: '#409eff' } },
                 // MA20
                 { name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+                    color: '#b37feb',
                     data: ma20, smooth: true, symbol: 'none',
-                    lineStyle: { width: 1, color: '#b37feb' } },
+                    lineStyle: { width: 1.5, color: '#b37feb' } },
+                // MA30
+                { name: 'MA30', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+                    color: '#5cdbd3',
+                    data: ma30, smooth: true, symbol: 'none',
+                    lineStyle: { width: 1.5, color: '#5cdbd3' } },
                 // MA60
                 { name: 'MA60', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+                    color: '#ff85c0',
                     data: ma60, smooth: true, symbol: 'none',
-                    lineStyle: { width: 1, color: '#ff85c0' } },
+                    lineStyle: { width: 1.5, color: '#ff85c0' } },
                 // MACD柱状图
                 {
                     name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2,
@@ -1707,7 +1717,7 @@ async function loadKlineChart() {
                     lineStyle: { width: 1, color: '#ffd666' } },
             ],
             legend: {
-                data: ['MA5', 'MA10', 'MA20', 'MA60', '成交量', 'DIF', 'DEA'],
+                data: ['MA5', 'MA10', 'MA20', 'MA30', 'MA60', '成交量', 'DIF', 'DEA'],
                 top: 0, right: 10, textStyle: { color: '#ccc', fontSize: 11 },
                 icon: 'roundRect',
             },
