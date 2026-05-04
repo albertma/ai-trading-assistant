@@ -37,8 +37,16 @@
                 </div>
             </template>
             <el-table :data="alerts" stripe style="width:100%" v-loading="loadingAlerts">
-                <el-table-column prop="code" label="代码" width="90" />
-                <el-table-column prop="name" label="名称" width="100" />
+                <el-table-column label="名称" width="100">
+                    <template #default="{ row }">
+                        <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.name }}</router-link>
+                    </template>
+                </el-table-column>
+                <el-table-column label="代码" width="90">
+                    <template #default="{ row }">
+                        <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.code }}</router-link>
+                    </template>
+                </el-table-column>
                 <el-table-column prop="type" label="级别" width="80">
                     <template #default="{ row }">
                         <el-tag :type="row.type === 'danger' ? 'danger' : row.type === 'warning' ? 'warning' : 'info'" size="small">

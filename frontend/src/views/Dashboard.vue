@@ -50,8 +50,16 @@
                     <el-card shadow="hover">
                         <template #header><b>📈 涨幅TOP10</b></template>
                         <el-table :data="gainers" size="small" stripe style="width:100%">
-                            <el-table-column prop="code" label="代码" width="90" />
-                            <el-table-column prop="name" label="名称" min-width="120" />
+                            <el-table-column label="名称" min-width="120">
+                                <template #default="{ row }">
+                                    <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.name }}</router-link>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="代码" width="90">
+                                <template #default="{ row }">
+                                    <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.code }}</router-link>
+                                </template>
+                            </el-table-column>
                             <el-table-column prop="change_pct" label="涨幅" width="90">
                                 <template #default="{ row }">
                                     <span :style="{ color: (row.change_pct||0) >= 0 ? '#f56c6c' : '#67c23a' }">
@@ -66,8 +74,16 @@
                     <el-card shadow="hover">
                         <template #header><b>📉 跌幅TOP10</b></template>
                         <el-table :data="losers" size="small" stripe style="width:100%">
-                            <el-table-column prop="code" label="代码" width="90" />
-                            <el-table-column prop="name" label="名称" min-width="120" />
+                            <el-table-column label="名称" min-width="120">
+                                <template #default="{ row }">
+                                    <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.name }}</router-link>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="代码" width="90">
+                                <template #default="{ row }">
+                                    <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.code }}</router-link>
+                                </template>
+                            </el-table-column>
                             <el-table-column prop="change_pct" label="涨幅" width="90">
                                 <template #default="{ row }">
                                     <span :style="{ color: (row.change_pct||0) >= 0 ? '#f56c6c' : '#67c23a' }">
@@ -102,8 +118,16 @@
                     <el-card shadow="hover">
                         <template #header><b>💰 成交额 TOP10</b></template>
                         <el-table :data="topVolume" size="small" stripe style="width:100%">
-                            <el-table-column prop="code" label="代码" width="90" />
-                            <el-table-column prop="name" label="名称" min-width="120" />
+                            <el-table-column label="名称" min-width="120">
+                                <template #default="{ row }">
+                                    <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.name }}</router-link>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="代码" width="90">
+                                <template #default="{ row }">
+                                    <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.code }}</router-link>
+                                </template>
+                            </el-table-column>
                             <el-table-column prop="amount" label="成交额(亿)" width="100">
                                 <template #default="{ row }">
                                     {{ (row.amount||0).toFixed(1) }}

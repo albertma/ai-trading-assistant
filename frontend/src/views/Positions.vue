@@ -65,14 +65,14 @@
                     </div>
                 </template>
                 <el-table :data="items" stripe style="width:100%" size="small">
-                    <el-table-column prop="code" label="代码" width="90">
+                    <el-table-column label="名称" width="100">
                         <template #default="{ row }">
-                            <el-button type="primary" link size="small" @click="goAnalysis(row.code)">{{ row.code }}</el-button>
+                            <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.name }}</router-link>
                         </template>
                     </el-table-column>
-                    <el-table-column prop="name" label="名称" width="100">
+                    <el-table-column label="代码" width="90">
                         <template #default="{ row }">
-                            <el-button type="primary" link size="small" @click="goAnalysis(row.code)">{{ row.name }}</el-button>
+                            <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.code }}</router-link>
                         </template>
                     </el-table-column>
                     <el-table-column prop="quantity" label="数量" width="80" align="right" />

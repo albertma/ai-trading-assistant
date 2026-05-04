@@ -80,7 +80,7 @@ def _get_industry_data(sector: str | None) -> dict | None:
         d = (today - timedelta(days=i)).isoformat()
         path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
         if path.exists():
-            df = pd.read_csv(path, encoding="utf-16", sep="\t", engine="python")
+            df = pd.read_csv(path, encoding="utf-16", sep="\t")
             break
     else:
         return None
@@ -95,17 +95,24 @@ def _get_industry_data(sector: str | None) -> dict | None:
     total = len(all_sectors)
     rank = all_sectors.index.get_loc(sector) + 1 if sector in all_sectors.index else None
 
-    # 头部股票
-    top5 = sector_df.nlargest(5, "涨幅")[["代码", "名称", "最新", "涨幅", "总市值"]]
-    top5_list = []
-    for _, r in top5.iterrows():
-        top5_list.append({
+    def _row_to_stock(r):
+        return {
             "code": str(r["代码"]).strip("'\""),
             "name": r["名称"],
             "price": float(r["最新"]) if pd.notna(r["最新"]) else 0,
             "change_pct": float(r["涨幅"]) if pd.notna(r["涨幅"]) else 0,
             "market_cap": float(r["总市值"]) if pd.notna(r["总市值"]) else 0,
-        })
+        }
+
+    # 头部股票（按涨幅）
+    top_by_gain = []
+    for _, r in sector_df.nlargest(5, "涨幅").iterrows():
+        top_by_gain.append(_row_to_stock(r))
+
+    # 龙头股（按总市值）
+    top_by_mcap = []
+    for _, r in sector_df.nlargest(5, "总市值").iterrows():
+        top_by_mcap.append(_row_to_stock(r))
 
     # 行业统计
     valid = sector_df[sector_df["涨幅"].notna()]
@@ -121,15 +128,183 @@ def _get_industry_data(sector: str | None) -> dict | None:
         "avg_change": round(avg_chg, 2),
         "up_ratio": round(up_count / total_count * 100, 1) if total_count > 0 else 0,
         "stock_count": total_count,
-        "top_stocks": top5_list,
+        "top_stocks": top_by_gain,
+        "top_by_market_cap": top_by_mcap,
     }
 
 
 # ============================================================
-# API 路由
+# 4. 供应链上下游（概念板块）
+# ============================================================
+_chain_cache = {}
+_CHAIN_CACHE_TTL = 3600  # 1小时缓存
+
+# 常见行业的供应链概念板块映射
+_INDUSTRY_CHAIN_MAP = {
+    "电池": {
+        "上游-资源": ["锂矿概念"],
+        "中游-材料": ["锂电池概念"],
+        "下游-应用": ["新能源车", "储能概念", "充电桩"],
+        "相关": ["固态电池", "动力电池回收"],
+    },
+    "半导体": {
+        "上游-设备材料": ["半导体概念", "光刻机(胶)"],
+        "中游-设计制造": ["国产芯片", "第三代半导体"],
+        "下游-封测应用": ["先进封装", "汽车芯片", "AI芯片"],
+        "相关": ["存储芯片", "第四代半导体"],
+    },
+    "汽车零部件": {
+        "上游-原材料": ["汽车热管理", "汽车轻量化"],
+        "中游-零部件": ["汽车零部件", "一体化压铸"],
+        "下游-整车": ["汽车整车", "新能源汽车"],
+        "相关": ["汽车电子", "无人驾驶"],
+    },
+    "光伏设备": {
+        "上游-原材料": ["硅能源", "有机硅"],
+        "中游-电池组件": ["光伏概念", "HJT电池", "TOPCon电池"],
+        "下游-运营": ["绿色电力"],
+        "相关": ["储能概念", "碳中和"],
+    },
+    "白酒": {
+        "上游-粮食": ["农业种植"],
+        "中游-生产": ["白酒概念"],
+        "下游-渠道": ["新零售", "电子商务"],
+        "相关": ["食品饮料", "大消费"],
+    },
+    "证券": {
+        "相关-同行": ["证券概念"],
+        "相关-市场": ["参股券商", "互联网金融"],
+    },
+    "医疗器械": {
+        "上游-材料": ["医疗耗材", "生物材料"],
+        "中游-设备": ["医疗器械概念", "体外诊断"],
+        "下游-服务": ["医疗服务", "互联网医疗"],
+        "相关": ["医药电商"],
+    },
+    "软件开发": {
+        "上游-基础设施": ["国产软件", "信创", "操作系统"],
+        "相关-应用": ["人工智能", "数字经济", "云计算", "大数据"],
+        "下游-行业": ["金融科技", "智慧政务"],
+    },
+    "航空装备Ⅱ": {
+        "上游-材料": ["军工材料"],
+        "中游-制造": ["航空发动机", "大飞机", "军工"],
+        "相关": ["无人机", "商业航天"],
+    },
+    "军工电子Ⅱ": {
+        "上游-元器件": ["军工电子", "军工信息化"],
+        "中游-系统": ["军工", "卫星导航"],
+        "相关": ["商业航天", "军民融合"],
+    },
+    "自动化设备": {
+        "上游-核心部件": ["机器人概念", "机器视觉"],
+        "中游-整机": ["工业母机", "工业自动化"],
+        "下游-应用": ["智能物流"],
+        "相关": ["人形机器人"],
+    },
+    "化学制品": {
+        "上游-原料": ["氟化工", "磷化工", "煤化工"],
+        "中游-生产": ["化工", "化工合成材料"],
+        "下游-应用": ["可降解塑料", "电子化学品"],
+        "相关": ["锂电池概念", "新材料"],
+    },
+    "化学原料": {
+        "上游": ["氟化工", "磷化工", "煤化工"],
+        "中游": ["化工", "化工合成材料"],
+        "下游": ["锂电池概念", "可降解塑料"],
+        "相关": ["新材料"],
+    },
+    "通信设备": {
+        "上游-芯片": ["5G概念", "通信模组"],
+        "中游-设备": ["通信设备", "光通信"],
+        "下游-运营": ["电信运营", "数据中心"],
+        "相关": ["物联网", "6G概念"],
+    },
+    "计算机设备": {
+        "上游-零部件": ["存储芯片", "AI芯片"],
+        "中游-整机": ["服务器", "计算机设备"],
+        "下游-应用": ["云计算", "数据中心"],
+        "相关": ["信创", "国产软件"],
+    },
+    "电力": {
+        "上游-发电": ["绿色电力", "风电", "光伏概念"],
+        "中游-传输": ["智能电网", "特高压"],
+        "下游-服务": ["储能概念", "电力物联网"],
+        "相关": ["碳中和", "充电桩"],
+    },
+    "电子化学品Ⅱ": {
+        "上游-原料": ["氟化工", "磷化工"],
+        "中游-材料": ["光刻胶", "半导体材料"],
+        "下游-应用": ["半导体", "显示面板"],
+        "相关": ["PCB概念"],
+    },
+}
+
+
+def _get_supply_chain(sector: str | None) -> list | None:
+    """获取行业供应链上下游的概念板块及代表股"""
+    if not sector or sector == "--":
+        return None
+
+    import akshare as ak
+    import time
+
+    cache_key = f"chain_{sector}"
+    now = time.time()
+    cached = _chain_cache.get(cache_key)
+    if cached and (now - cached["ts"]) < _CHAIN_CACHE_TTL:
+        return cached["data"]
+
+    chain_def = _INDUSTRY_CHAIN_MAP.get(sector)
+    if not chain_def:
+        return None
+
+    try:
+        boards_df = ak.stock_board_concept_name_em()
+        board_map = {}
+        for _, r in boards_df.iterrows():
+            board_map[r["板块名称"]] = r["板块代码"]
+    except Exception:
+        return None
+
+    result = []
+    for role, board_names in chain_def.items():
+        role_data = {"role": role, "boards": []}
+        for bname in board_names:
+            board_code = board_map.get(bname)
+            if not board_code:
+                continue
+            try:
+                cons_df = ak.stock_board_concept_cons_em(symbol=bname)
+                top5 = cons_df.nlargest(5, "涨跌幅")[["代码", "名称", "最新价", "涨跌幅"]]
+                stocks = []
+                for _, r in top5.iterrows():
+                    stocks.append({
+                        "code": str(r["代码"]).strip(),
+                        "name": r["名称"],
+                        "price": float(r["最新价"]) if pd.notna(r["最新价"]) else 0,
+                        "change_pct": float(r["涨跌幅"]) if pd.notna(r["涨跌幅"]) else 0,
+                    })
+                role_data["boards"].append({
+                    "board_name": bname,
+                    "board_code": board_code,
+                    "stock_count": len(cons_df),
+                    "top_stocks": stocks,
+                })
+            except Exception:
+                continue
+        if role_data["boards"]:
+            result.append(role_data)
+
+    _chain_cache[cache_key] = {"ts": now, "data": result}
+    return result
+
+
+# ============================================================
+# 5. API 路由
 # ============================================================
 # ============================================================
-# 4. 杜邦分析
+# 6. 杜邦分析
 # ============================================================
 def _parse_num(val) -> float | None:
     """把财务字段解析成数值（已去除亿/万/%等单位）"""
@@ -527,6 +702,259 @@ def expense_analysis(code: str):
     return {"code": code, "name": name, "expenses": data}
 
 
+_concept_board_cache = {}
+_CONCEPT_CACHE_TTL = 300  # 5分钟
+
+def _get_concept_board_data() -> dict:
+    """获取概念板块实时行情并缓存"""
+    global _concept_board_cache
+    import time
+    now = time.time()
+    if _concept_board_cache and (now - _concept_board_cache.get("_ts", 0)) < _CONCEPT_CACHE_TTL:
+        return _concept_board_cache
+    
+    try:
+        import akshare as ak
+        df = ak.stock_board_concept_name_em()
+        result = {}
+        for _, r in df.iterrows():
+            name = str(r.get("板块名称", ""))
+            result[name] = {
+                "change_pct": float(r.get("涨跌幅", 0) or 0),
+                "up_count": int(r.get("上涨家数", 0) or 0),
+                "down_count": int(r.get("下跌家数", 0) or 0),
+                "turnover": float(r.get("换手率", 0) or 0),
+                "leader": str(r.get("领涨股票", "")),
+                "leader_chg": float(r.get("领涨股票-涨跌幅", 0) or 0),
+            }
+        result["_ts"] = now
+        _concept_board_cache = result
+        return result
+    except Exception:
+        return _concept_board_cache or {}
+
+
+def _lookup_board(board_name: str, board_data: dict) -> dict | None:
+    """智能模糊匹配概念板块名称"""
+    if not board_name or not board_data:
+        return None
+    # 1. 精确匹配
+    if board_name in board_data:
+        return board_data[board_name]
+    
+    # 2. 构建关键词（去除通用词后取2字以上的词）
+    key_words = []
+    for kw in [board_name, board_name[:2], board_name[:3]]:
+        if len(kw) >= 2:
+            key_words.append(kw)
+    
+    # 3. 对每个真实板块名打分
+    best_match = None
+    best_score = 0
+    for real_name, info in board_data.items():
+        if real_name.startswith("_"):
+            continue
+        score = 0
+        # 子串包含
+        if board_name in real_name:
+            score += 10
+        if real_name in board_name:
+            score += 8
+        # 关键词匹配
+        for kw in key_words:
+            if kw in real_name:
+                score += 5
+        if score > best_score:
+            best_score = score
+            best_match = info
+    
+    # 4. 阈值：至少5分才认为匹配
+    if best_score >= 5:
+        return best_match
+    return None
+
+
+def _analyze_industry_cycle(sector: str, industry_data: dict | None) -> dict | None:
+    """行业景气周期 + 供需矛盾分析 + 量化预测"""
+    if not industry_data:
+        return None
+    
+    avg_chg = industry_data.get("avg_change", 0) or 0
+    up_ratio = industry_data.get("up_ratio", 0) or 0
+    rank = industry_data.get("rank")
+    total = industry_data.get("total_sectors", 100) or 100
+    stock_count = industry_data.get("stock_count", 0) or 0
+    
+    # ---- 1. 行业景气周期判定 ----
+    rank_pct = round(rank / total * 100, 1) if rank else 50  # rank百分比(越小越好)
+    
+    if avg_chg > 3 and up_ratio > 70 and rank_pct < 20:
+        cycle_stage = "过热期 🔥"
+        cycle_score = 90
+        cycle_desc = "板块涨幅大、上涨占比高、排名靠前，市场情绪亢奋，需警惕过热后回调风险"
+        cycle_risk = "追高风险大，不建议新建仓位"
+    elif avg_chg > 1 and up_ratio > 60 and rank_pct < 35:
+        cycle_stage = "扩张期 🚀"
+        cycle_score = 75
+        cycle_desc = "板块整体强势，上涨家数占优，处于主升浪阶段，资金持续流入"
+        cycle_risk = "趋势延续概率大，但需关注量能变化"
+    elif avg_chg > 0 and up_ratio > 45:
+        cycle_stage = "复苏期 🌱"
+        cycle_score = 55
+        cycle_desc = "板块温和上涨，涨跌接近平衡，但排名在改善，可能处于底部区域"
+        cycle_risk = "方向未明，适合逐步建仓，不宜重仓"
+    elif avg_chg > -2 and up_ratio > 30:
+        cycle_stage = "调整期 📉"
+        cycle_score = 35
+        cycle_desc = "板块小幅下跌，市场情绪偏弱，可能是上升趋势中的正常调整"
+        cycle_risk = "关注是否企稳，避免左侧抄底"
+    else:
+        cycle_stage = "衰退期 ❄️"
+        cycle_score = 20
+        cycle_desc = "板块明显下跌，多数个股走弱，资金流出明显，处于下行趋势"
+        cycle_risk = "不宜参与，等待反转信号"
+    
+    # ---- 2. 产业链各环节供需矛盾分析 ----
+    chain_map = _INDUSTRY_CHAIN_MAP.get(sector, {})
+    board_data = _get_concept_board_data()
+    chain_analysis = []
+    chain_scores = []
+    
+    for stage_name, boards in chain_map.items():
+        stage_items = []
+        total_chg = 0
+        valid_boards = 0
+        
+        for board in boards:
+            info = _lookup_board(board, board_data)
+            if info:
+                up_ratio_b = info["up_count"] / max(info["up_count"] + info["down_count"], 1) * 100
+                stage_items.append({
+                    "name": board,
+                    "change_pct": info["change_pct"],
+                    "up_ratio": round(up_ratio_b, 1),
+                    "leader": info["leader"],
+                    "leader_chg": info["leader_chg"],
+                })
+                total_chg += info["change_pct"]
+                valid_boards += 1
+            else:
+                stage_items.append({
+                    "name": board,
+                    "change_pct": None,
+                    "up_ratio": None,
+                    "leader": "--",
+                    "leader_chg": None,
+                })
+        
+        avg_stage_chg = round(total_chg / valid_boards, 2) if valid_boards > 0 else None
+        
+        # 判定该环节的供需状态
+        if avg_stage_chg is not None and avg_stage_chg > 3 and any(i.get("up_ratio",0) and i["up_ratio"] > 75 for i in stage_items if i["up_ratio"]):
+            status = "供不应求 🏭"
+            status_score = 85
+            status_desc = f"资金集中涌入，{valid_boards}个概念板块普涨，短期需求旺盛"
+            opp_risk = "⚠️ 过热风险：涨幅过大可能短期回调，不宜追高"
+        elif avg_stage_chg is not None and avg_stage_chg > 1:
+            status = "需求旺盛 📈"
+            status_score = 70
+            status_desc = f"环节整体上涨，资金流入积极，供需格局向好"
+            opp_risk = "✅ 机会：环节景气度高，关注领先股回调后机会"
+        elif avg_stage_chg is not None and avg_stage_chg > -1:
+            status = "供需平衡 ="
+            status_score = 50
+            status_desc = f"环节表现平稳，无明显供需失衡"
+            opp_risk = "➡️ 中性：此环节暂不是主要矛盾，等待催化剂"
+        elif avg_stage_chg is not None and avg_stage_chg > -3:
+            status = "供给偏松 📉"
+            status_score = 30
+            status_desc = f"环节小幅下跌，供给略大于需求，短期承压"
+            opp_risk = "🔍 关注：如果是上游环节走弱可能传导至下游"
+        else:
+            status = "供过于求 📦"
+            status_score = 15
+            status_desc = f"环节明显下跌，供给过剩或需求萎缩，资金流出"
+            opp_risk = "🚫 风险：该环节产能过剩或需求不足，回避为主"
+        
+        chain_scores.append(status_score)
+        
+        chain_analysis.append({
+            "stage": stage_name,
+            "avg_change": avg_stage_chg,
+            "status": status,
+            "status_score": status_score,
+            "desc": status_desc,
+            "opp_risk": opp_risk,
+            "boards": stage_items,
+        })
+    
+    # 汇总整条产业链的供需矛盾评分（各环节均值）
+    if chain_analysis:
+        supply_score = round(sum(c["status_score"] for c in chain_analysis) / len(chain_analysis), 1)
+        # 找出最紧张和最松弛的环节
+        tightest = max(chain_analysis, key=lambda c: c["status_score"])
+        loosest = min(chain_analysis, key=lambda c: c["status_score"])
+        bottleneck = f"卡脖子环节在「{tightest['stage']}」（{tightest['status']}），"
+        bottleneck += f"最薄弱环节在「{loosest['stage']}」（评分{loosest['status_score']}）" if loosest['stage'] != tightest['stage'] else f"整条链同向，需要重点关注"
+        
+        supply_demand = f"产业链评分{supply_score}分"
+        supply_desc = bottleneck
+        supply_outlook = f"上游→{chain_analysis[0]['status'] if chain_analysis else '—'} → 中游→{chain_analysis[1]['status'] if len(chain_analysis) > 1 else '—'} → 下游→{chain_analysis[2]['status'] if len(chain_analysis) > 2 else '—'}"
+    else:
+        supply_score = 50
+        supply_demand = "无产业链数据"
+        supply_desc = "该行业暂未建立产业链映射"
+        supply_outlook = "" 
+    
+    # ---- 3. 量化预测 ----
+    # 综合评分 = 景气周期分 * 0.5 + 供需分 * 0.3 + 排名分 * 0.2
+    rank_score = max(0, 100 - rank_pct * 1.5) if rank else 50
+    outlook_score = round(cycle_score * 0.5 + supply_score * 0.3 + rank_score * 0.2, 1)
+    
+    if outlook_score >= 75:
+        outlook_label = "偏乐观 ✅"
+        outlook_dir = "上涨 ↗️"
+    elif outlook_score >= 55:
+        outlook_label = "中性偏多 📈"
+        outlook_dir = "震荡偏强 ↗️"
+    elif outlook_score >= 35:
+        outlook_label = "中性偏弱 📉"
+        outlook_dir = "震荡偏弱 ↘️"
+    else:
+        outlook_label = "偏悲观 ❌"
+        outlook_dir = "下跌 ↘️"
+    
+    # 近期走势判断
+    if avg_chg > 2 and up_ratio > 65:
+        short_term = "短期强势，但连续上涨后需警惕技术性回调"
+    elif avg_chg < -1.5:
+        short_term = "短期承压，关注是否有企稳信号"
+    elif avg_chg > 0:
+        short_term = "短期温和上行，趋势健康"
+    else:
+        short_term = "短期弱势震荡，等待方向选择"
+    
+    return {
+        "sector": sector,
+        # 景气周期
+        "cycle_stage": cycle_stage,
+        "cycle_score": cycle_score,
+        "cycle_desc": cycle_desc,
+        "cycle_risk": cycle_risk,
+        # 供需矛盾（产业链各环节）
+        "supply_demand": supply_demand,
+        "supply_score": supply_score,
+        "supply_desc": supply_desc,
+        "supply_outlook": supply_outlook,
+        "chain_analysis": chain_analysis,
+        # 量化预测
+        "outlook_score": outlook_score,
+        "outlook_label": outlook_label,
+        "outlook_dir": outlook_dir,
+        "short_term": short_term,
+    }
+
+
 @router.get("/{code}")
 def fundamental_analysis(code: str):
     """基本面综合：财务摘要 + 收入构成 + 行业前瞻"""
@@ -551,7 +979,7 @@ def fundamental_analysis(code: str):
         d = (today - timedelta(days=i)).isoformat()
         path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
         if path.exists():
-            df = pd.read_csv(path, encoding="utf-16", sep="\t", engine="python")
+            df = pd.read_csv(path, encoding="utf-16", sep="	", engine="python")
             df["代码"] = df["代码"].astype(str).str.strip("'\"")
             match = df[df["代码"] == code]
             if not match.empty:
@@ -560,6 +988,11 @@ def fundamental_analysis(code: str):
 
     # 行业前瞻
     industry = _get_industry_data(sector)
+    
+    # 行业景气周期 + 供需矛盾分析 + 量化预测
+    cycle = _analyze_industry_cycle(sector, industry)
+    if industry and cycle:
+        industry["cycle_analysis"] = cycle
 
     return {
         "code": code,
@@ -571,8 +1004,862 @@ def fundamental_analysis(code: str):
     }
 
 
+@router.get("/{code}/supply_chain")
+def supply_chain_api(code: str):
+    """供应链上下游数据（概念板块），lazy加载"""
+    from backend.routers.analysis import _get_stock_list
+    stock_map = _get_stock_list()
+    name = stock_map.get(code, "")
+
+    # 获取行业
+    sector = None
+    today = date.today()
+    for i in range(5):
+        d = (today - timedelta(days=i)).isoformat()
+        path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
+        if path.exists():
+            df = pd.read_csv(path, encoding="utf-16", sep="\t", engine="python")
+            df["代码"] = df["代码"].astype(str).str.strip("'\"")
+            match = df[df["代码"] == code]
+            if not match.empty:
+                sector = match.iloc[0].get("所属行业", "")
+            break
+
+    supply = _get_supply_chain(sector)
+    return {
+        "code": code,
+        "name": name,
+        "sector": sector,
+        "supply_chain": supply,
+    }
+
+
+def _recommend_mental_models(code, name, sector, total_pct, primary_name, pe, chg_pct, chg3d, rev_growth, profit_growth, roe, mcap, lifecycle_stage, industry_avg_chg):
+    """推荐最适用的3个底层思维模型"""
+    candidates = []
+
+    # 1. 反脆弱 — 高波动/高负债/高集中度时触发
+    if chg_pct is not None and abs(chg_pct) > 5:
+        candidates.append({
+            "model": "反脆弱 🛡️",
+            "reason": f"今日涨幅{chg_pct:+.1f}%，波动剧烈，塔勒布式思维：这个仓位在波动中受益还是受损？",
+            "question": "如果明日反向波动5%，你的持仓能否承受？",
+            "tag": "risk"
+        })
+    if total_pct < 50:
+        candidates.append({
+            "model": "反脆弱 🛡️",
+            "reason": f"矛盾总评分仅{total_pct}%，多个矛盾突出。反脆弱思维：在这样的标的上，你的仓位是否「有下限无上限」？",
+            "question": "如果这只股票再跌20%，你的应对方案是什么？",
+            "tag": "risk"
+        })
+
+    # 2. 二阶效应 — 高增长/高估值/板块联动
+    if rev_growth is not None and rev_growth > 20:
+        candidates.append({
+            "model": "二阶效应 🔄",
+            "reason": f"营收增长{rev_growth:.1f}%，高增长的二阶效应：需求可持续吗？竞争对手会跟进吗？",
+            "question": "如果行业增速放缓，你的持仓逻辑会怎么变化？",
+            "tag": "system"
+        })
+    if sector and industry_avg_chg is not None and abs(industry_avg_chg) > 3:
+        candidates.append({
+            "model": "二阶效应 🔄",
+            "reason": f"{sector}板块今日涨幅{industry_avg_chg:+.1f}%，板块轮动的二阶效应：资金从哪来？下一个流向哪？",
+            "question": "如果这个板块的热度消退，你的持仓会受到什么间接影响？",
+            "tag": "system"
+        })
+
+    # 3. 幸存者偏差 — 只看涨不看跌
+    if chg_pct is not None and chg_pct > 3:
+        candidates.append({
+            "model": "幸存者偏差 📊",
+            "reason": f"今日涨{chg_pct:.1f}%，盈利容易导致幸存者偏差：你的分析逻辑是普遍的，还是只适用于上涨市场？",
+            "question": "如果今天跌的不是涨，你会做出同样的买入决策吗？",
+            "tag": "psychology"
+        })
+
+    # 4. 能力圈 — 需要警惕的认知边界
+    if mcap is not None and mcap < 200:
+        candidates.append({
+            "model": "能力圈 🎯",
+            "reason": f"市值仅{mcap:.0f}亿小盘股，你真的了解它的业务模式和竞争壁垒吗？",
+            "question": "你能用两句话说清楚这家公司靠什么赚钱吗？如果说不清，就不在能力圈内。",
+            "tag": "core"
+        })
+    if pe is not None and pe > 80:
+        candidates.append({
+            "model": "能力圈 🎯",
+            "reason": f"PE高达{pe:.0f}倍，市场在定价一个高增长预期。你真的理解这个预期的依据吗？",
+            "question": "你比市场更了解这个公司吗？如果不是，凭什么认为市场定价错了？",
+            "tag": "core"
+        })
+
+    # 5. 安全边际 — 估值保护
+    if pe is not None and pe > 40:
+        candidates.append({
+            "model": "安全边际 🛡️💰",
+            "reason": f"PE {pe:.0f}倍，安全边际较薄。格雷厄姆式提问：如果停牌3年，你还会买吗？",
+            "question": "当前价格下跌30%后，你的买入理由还成立吗？",
+            "tag": "value"
+        })
+    if total_pct < 50 and primary_name:
+        candidates.append({
+            "model": "安全边际 🛡️💰",
+            "reason": f"主要矛盾在「{primary_name}」，安全边际正在被侵蚀。最坏情况下你的亏损上限在哪？",
+            "question": "你能给这个股票一个「不会亏钱」的买入价格吗？",
+            "tag": "value"
+        })
+
+    # 6. 机会成本 — 持仓优化
+    candidates.append({
+        "model": "机会成本 📐",
+        "reason": f"当前持仓{sector or name}的预期收益率，与现金/ETF/其他板块相比如何？",
+        "question": "如果不持有这只，你会把资金投到哪里？那个选择的预期收益更高吗？",
+        "tag": "portfolio"
+    })
+
+    # 7. 临界点 — 趋势转折
+    if chg3d is not None and abs(chg3d) > 8:
+        candidates.append({
+            "model": "临界点/引爆点 💥",
+            "reason": f"3日振幅{chg3d:+.1f}%，价格可能接近一个重要的转折点。格拉德威尔式提问：什么条件会触发趋势反转？",
+            "question": "这个临界点到了之后，你是站在哪个方向？",
+            "tag": "system"
+        })
+
+    # 8. 纳什均衡 — 博弈分析
+    if sector:
+        candidates.append({
+            "model": "纳什均衡 ♟️",
+            "reason": f"在{sector or ''}这个赛道上，你比机构投资者多知道什么？",
+            "question": "如果你的对手盘是量化基金，他们现在在做什么？你的策略和他们的最优策略一致吗？",
+            "tag": "game"
+        })
+
+    # 9. 汉隆剃刀 — 避免归因错误
+    if chg_pct is not None and chg_pct < -3:
+        candidates.append({
+            "model": "汉隆剃刀 🪒",
+            "reason": f"今日跌{chg_pct:.1f}%，不要归结为恶意（庄家砸盘/主力洗盘）。更可能只是随机波动或宏观因素。",
+            "question": "排除阴谋论后，最合理的解释是什么？这个解释能指导你的下一步操作吗？",
+            "tag": "psychology"
+        })
+
+    # 10. 叙事经济 — 市场在交易什么故事
+    if sector:
+        candidates.append({
+            "model": "叙事经济 📖",
+            "reason": f"{sector}当前的市场叙事是什么？这个叙事是新的还是老故事重讲？",
+            "question": "当这个叙事被证伪时，市场会怎么反应？",
+            "tag": "market"
+        })
+
+    # 11. 帕累托最优 — 持仓优化
+    candidates.append({
+        "model": "帕累托最优 ⚡",
+        "reason": "在不增加风险的前提下，你的持仓组合能否改进？去掉最差的、加仓最好的？",
+        "question": "你的持仓中，哪只股票是「不优化也不损失」的状态？哪只可以通过替换改善？",
+        "tag": "portfolio"
+    })
+
+    # 12. 复利效应 — 长期视角
+    if roe is not None and roe > 15:
+        candidates.append({
+            "model": "复利效应 📈",
+            "reason": f"ROE {roe:.1f}%，如果这个ROE可持续，7年资产翻倍。复利的关键是连续性而非爆发性。",
+            "question": "这个ROE能维持5年吗？阻力的来源是什么？",
+            "tag": "longterm"
+        })
+
+    # 去重 + 排序 + 取top3
+    seen = set()
+    deduped = []
+    for c in candidates:
+        model_name = c["model"].split(" ")[0]
+        if model_name not in seen:
+            seen.add(model_name)
+            deduped.append(c)
+
+    # 按优先级排序：先核心→价值→risk→portfolio→system→其他
+    priority = {"core": 0, "value": 1, "risk": 2, "portfolio": 3, "system": 4, "psychology": 5, "game": 6, "market": 7, "longterm": 8}
+    deduped.sort(key=lambda x: priority.get(x.get("tag",""), 99))
+
+    return deduped[:3]
+
+
 # ============================================================
-# 6. 三张财务报表
+# 7. 矛盾分析：5大矛盾对 + 主次判定 + 转化条件
+# ============================================================
+def _get_contradiction_analysis(code: str) -> dict | None:
+    """矛盾分析：贯穿辩证分析，找出主要/次要矛盾及转化条件"""
+    import akshare as ak
+    from backend.routers.analysis import _get_stock_list
+    import numpy as np
+
+    stock_map = _get_stock_list()
+    name = stock_map.get(code, "")
+    if not name:
+        return None
+
+    # ---- 1. 收集数据源 ----
+    # 1a. 财务分析指标
+    indicators = {}
+    try:
+        df_ind = ak.stock_financial_analysis_indicator(symbol=code, start_year="2023")
+        df_ind = df_ind.sort_values("日期", ascending=False)
+        records_ind = df_ind.to_dict("records")
+        indicators = records_ind[0] if records_ind else {}
+    except Exception:
+        indicators = {}
+
+    # 1b. 财务摘要（多期趋势）
+    fin = _get_financial_summary(code)
+    fin_records = (fin or {}).get("records", [])[-12:]  # 最近12期
+
+    # 1c. 行业数据（从CSV）
+    sector = None
+    today = date.today()
+    csv_df = None
+    for i in range(5):
+        d = (today - timedelta(days=i)).isoformat()
+        path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
+        if path.exists():
+            csv_df = pd.read_csv(path, encoding="utf-16", sep="\t", engine="python")
+            csv_df["代码"] = csv_df["代码"].astype(str).str.strip("'\"")
+            match = csv_df[csv_df["代码"] == code]
+            if not match.empty:
+                sector = match.iloc[0].get("所属行业", "")
+            break
+
+    industry = _get_industry_data(sector)
+
+    def _flt(v):
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return None
+        try:
+            return round(float(v), 2)
+        except (ValueError, TypeError):
+            return None
+
+    # ---- 2. 计算5大矛盾对 ----
+    lat = indicators
+    contradictions = []
+
+    # === 矛盾① 价格 vs 价值 ===
+    pv_items = []
+    pv_score = 0
+
+    # 先行：涨幅动量
+    if csv_df is not None and not csv_df[csv_df["代码"] == code].empty:
+        row = csv_df[csv_df["代码"] == code].iloc[0]
+        cur_price = _flt(row.get("最新"))
+        chg_pct = _flt(row.get("涨幅"))
+        vol = _flt(row.get("成交量"))
+        pe = _flt(row.get("市盈率"))
+        pb = _flt(row.get("市净率"))
+        mcap = _flt(row.get("总市值"))
+        chg3d = _flt(row.get("3日涨幅"))
+    else:
+        cur_price = chg_pct = vol = pe = pb = mcap = chg3d = None
+
+    # 同步：当前涨跌幅（0-10分）
+    if chg_pct is not None:
+        vol_score = 0
+        if abs(chg_pct) > 7:
+            vol_score = 10  # 极端波动
+            pv_items.append({"type": "同步", "label": "当日涨跌幅", "value": f"{chg_pct:+.2f}%", "score": vol_score, "max": 10,
+                             "verdict": "极端波动 ⚠️"})
+        elif abs(chg_pct) > 4:
+            vol_score = 8
+            pv_items.append({"type": "同步", "label": "当日涨跌幅", "value": f"{chg_pct:+.2f}%", "score": vol_score, "max": 10,
+                             "verdict": "强波动"})
+        else:
+            vol_score = 5
+            pv_items.append({"type": "同步", "label": "当日涨跌幅", "value": f"{chg_pct:+.2f}%", "score": vol_score, "max": 10,
+                             "verdict": "正常波动"})
+        pv_score += vol_score
+
+    # 同步：PE估值分位（0-10分）
+    if pe is not None and pe > 0:
+        if pe > 80:
+            pe_score = 1
+            pe_verdict = "极高估值 🔴"
+        elif pe > 40:
+            pe_score = 3
+            pe_verdict = "偏高估值 🟡"
+        elif pe > 20:
+            pe_score = 6
+            pe_verdict = "合理估值 🟢"
+        elif pe > 10:
+            pe_score = 8
+            pe_verdict = "偏低估值 ✅"
+        else:
+            pe_score = 10
+            pe_verdict = "极低估值 💎"
+        pv_score += pe_score
+        pv_items.append({"type": "同步", "label": "PE估值", "value": f"{pe:.1f}", "score": pe_score, "max": 10, "verdict": pe_verdict})
+
+    # 先行：3日动量（0-8分）
+    if chg3d is not None:
+        mom_score = min(8, abs(chg3d) / 5 * 8)
+        pv_score += mom_score
+        pv_items.append({"type": "先行", "label": "3日动量", "value": f"{chg3d:+.2f}%", "score": round(mom_score, 1), "max": 8,
+                         "verdict": "动量强" if abs(chg3d) > 5 else ("动量中" if abs(chg3d) > 2 else "动量弱")})
+
+    # 滞后：ROE趋势（滞后验证价值）
+    roe = _flt(lat.get("净资产收益率(%)"))
+    if roe is not None:
+        roe_score = min(8, roe / 15 * 8)
+        pv_score += roe_score
+        pv_items.append({"type": "滞后", "label": "ROE（价值锚）", "value": f"{roe:.2f}%", "score": round(roe_score, 1), "max": 8,
+                         "verdict": "优秀" if roe > 15 else ("良好" if roe > 10 else ("一般" if roe > 5 else "偏低"))})
+
+    contradictions.append({
+        "id": "price_value",
+        "name": "价格 vs 价值",
+        "icon": "⚖️",
+        "desc": "当前价格偏离内在价值的程度",
+        "score": round(pv_score, 1),
+        "max": 36,
+        "pct": round(pv_score / 36 * 100, 1),
+        "level": "alert" if pv_score >= 25 else ("warn" if pv_score >= 18 else "normal"),
+        "items": pv_items,
+        "transformation": "当PE突破极端分位+动量反转时，价格可能向价值回归" if (pe or 0) > 40 else
+                          "当业绩超预期或行业催化时，低估可能被修正",
+    })
+
+    # === 矛盾② 成长 vs 估值 ===
+    gv_items = []
+    gv_score = 0
+
+    # 先行：营收增速
+    rev_growth = _flt(lat.get("主营业务收入增长率(%)"))
+    if rev_growth is not None:
+        rg_score = min(12, (rev_growth + 10) / 25 * 12) if rev_growth > -10 else 0
+        gv_score += max(0, rg_score)
+        gv_items.append({"type": "先行", "label": "营收增速", "value": f"{rev_growth:+.2f}%", "score": round(max(0, rg_score), 1), "max": 12,
+                         "verdict": "高增长" if rev_growth > 20 else ("增长" if rev_growth > 0 else "下滑")})
+
+    # 同步：利润增速
+    profit_growth = _flt(lat.get("净利润增长率(%)"))
+    if profit_growth is not None:
+        pg_score = min(12, (profit_growth + 15) / 30 * 12) if profit_growth > -15 else 0
+        gv_score += max(0, pg_score)
+        gv_items.append({"type": "同步", "label": "净利润增速", "value": f"{profit_growth:+.2f}%", "score": round(max(0, pg_score), 1), "max": 12,
+                         "verdict": "爆发" if profit_growth > 30 else ("增长" if profit_growth > 0 else "下滑")})
+
+    # 同步：PEG（隐含估值合理性）
+    if pe is not None and pe > 0 and profit_growth is not None and profit_growth > 0:
+        peg = round(pe / profit_growth, 2)
+        if peg < 1:
+            peg_score = 10
+            peg_verdict = "低估 💎"
+        elif peg < 2:
+            peg_score = 7
+            peg_verdict = "合理 🟢"
+        elif peg < 3:
+            peg_score = 4
+            peg_verdict = "偏高 🟡"
+        else:
+            peg_score = 1
+            peg_verdict = "高估 🔴"
+        gv_score += peg_score
+        gv_items.append({"type": "同步", "label": "PEG", "value": f"{peg:.2f}", "score": peg_score, "max": 10, "verdict": peg_verdict})
+
+    # 滞后：增长率趋势（多期比较）
+    if len(fin_records) >= 3:
+        try:
+            rev_vals = []
+            for r in fin_records[-3:]:
+                v = r.get("营业总收入同比增长率")
+                if v and v not in ("--", "", None):
+                    rev_vals.append(float(str(v).replace("%", "")))
+            if len(rev_vals) >= 2:
+                trend = rev_vals[-1] - rev_vals[0]
+                if trend > 5:
+                    trend_score = 8
+                    trend_verdict = "加速增长 ✅"
+                elif trend > -5:
+                    trend_score = 5
+                    trend_verdict = "增速平稳"
+                else:
+                    trend_score = 2
+                    trend_verdict = "增速放缓 ⚠️"
+                gv_score += trend_score
+                gv_items.append({"type": "滞后", "label": "增速趋势(3期)", "value": f"{trend:+.1f}pp", "score": trend_score, "max": 8,
+                                 "verdict": trend_verdict})
+        except Exception:
+            pass
+
+    contradictions.append({
+        "id": "growth_valuation",
+        "name": "成长 vs 估值",
+        "icon": "📈",
+        "desc": "成长速度是否已被市场充分定价",
+        "score": round(gv_score, 1),
+        "max": 42,
+        "pct": round(gv_score / 42 * 100, 1),
+        "level": "alert" if gv_score >= 30 else ("warn" if gv_score >= 20 else "normal"),
+        "items": gv_items,
+        "transformation": "营收增速连续2季降档>10pp时，高估值不可持续" if (profit_growth or 0) > 20 else
+                          "营收/利润增速拐点向上时，低估值可能被重估",
+    })
+
+    # === 矛盾③ 盈利质量 vs 现金流 ===
+    eq_items = []
+    eq_score = 0
+
+    # 先行：应收账款/营收比（利润质量预警）
+    if len(fin_records) >= 2:
+        try:
+            ar_ratios = []
+            for r in fin_records[-4:]:
+                rev_val = r.get("营业总收入")
+                ar_val = r.get("应收账款")
+                if rev_val and ar_val and rev_val not in ("--", "", None) and ar_val not in ("--", "", None):
+                    try:
+                        ratio = float(str(ar_val).replace("亿", "")) / float(str(rev_val).replace("亿", ""))
+                        ar_ratios.append(ratio)
+                    except (ValueError, ZeroDivisionError):
+                        pass
+            if ar_ratios:
+                avg_ar = sum(ar_ratios) / len(ar_ratios)
+                ar_score = max(0, 8 - avg_ar * 10)
+                eq_score += ar_score
+                eq_items.append({"type": "先行", "label": "应收/营收比", "value": f"{avg_ar*100:.1f}%", "score": round(ar_score, 1), "max": 8,
+                                 "verdict": "回款良好 ✅" if avg_ar < 0.2 else ("正常" if avg_ar < 0.4 else "回款偏慢 ⚠️")})
+        except Exception:
+            pass
+
+    # 同步：OCF/净利润比率（核心指标）
+    ocf_profit = _flt(lat.get("经营现金净流量与净利润的比率(%)"))
+    if ocf_profit is not None:
+        if ocf_profit > 100:
+            ocf_score = 14
+            ocf_verdict = "利润质量极高 💎"
+        elif ocf_profit > 50:
+            ocf_score = 10
+            ocf_verdict = "利润质量良好 ✅"
+        elif ocf_profit > 0:
+            ocf_score = 5
+            ocf_verdict = "利润质量偏低 ⚠️"
+        else:
+            ocf_score = 0
+            ocf_verdict = "OCF为负 🔴"
+        eq_score += ocf_score
+        eq_items.append({"type": "同步", "label": "OCF/净利润", "value": f"{ocf_profit:.1f}%", "score": ocf_score, "max": 14,
+                         "verdict": ocf_verdict})
+
+    # 滞后：毛利率趋势（盈利能力持续性）
+    gross_margin = _flt(lat.get("销售毛利率(%)"))
+    if gross_margin is not None:
+        gm_score = min(10, gross_margin / 30 * 10)
+        eq_score += gm_score
+        eq_items.append({"type": "滞后", "label": "毛利率", "value": f"{gross_margin:.2f}%", "score": round(gm_score, 1), "max": 10,
+                         "verdict": "极高" if gross_margin > 50 else ("高" if gross_margin > 25 else ("中" if gross_margin > 10 else "低"))})
+
+    contradictions.append({
+        "id": "quality_cashflow",
+        "name": "盈利质量 vs 现金流",
+        "icon": "💧",
+        "desc": "账面利润转化为真实现金的能力",
+        "score": round(eq_score, 1),
+        "max": 32,
+        "pct": round(eq_score / 32 * 100, 1),
+        "level": "alert" if eq_score >= 22 else ("warn" if eq_score >= 14 else "normal"),
+        "items": eq_items,
+        "transformation": "当OCF/净利润连续2期改善>30pp时，盈利质量矛盾缓解" if (ocf_profit or 0) < 50 else
+                          "当应收增速持续>营收增速时，利润质量可能恶化",
+    })
+
+    # === 矛盾④ 负债扩张 vs 财务安全 ===
+    df_items = []
+    df_score = 0
+
+    # 先行：总资产增长率（扩张信号）
+    asset_growth = _flt(lat.get("总资产增长率(%)"))
+    if asset_growth is not None:
+        if asset_growth > 20:
+            ag_score = 8
+            ag_verdict = "激进扩张 🔥"
+        elif asset_growth > 10:
+            ag_score = 6
+            ag_verdict = "稳步扩张 ✅"
+        elif asset_growth > 0:
+            ag_score = 4
+            ag_verdict = "温和扩张"
+        else:
+            ag_score = 2
+            ag_verdict = "收缩中"
+        df_score += ag_score
+        df_items.append({"type": "先行", "label": "总资产增长率", "value": f"{asset_growth:+.2f}%", "score": ag_score, "max": 8,
+                         "verdict": ag_verdict})
+
+    # 同步：资产负债率
+    debt_ratio = _flt(lat.get("资产负债率(%)"))
+    if debt_ratio is not None:
+        if debt_ratio < 30:
+            dr_score = 10
+            dr_verdict = "极低杠杆 ✅"
+        elif debt_ratio < 50:
+            dr_score = 8
+            dr_verdict = "合理杠杆 🟢"
+        elif debt_ratio < 65:
+            dr_score = 5
+            dr_verdict = "偏高杠杆 🟡"
+        else:
+            dr_score = 2
+            dr_verdict = "高杠杆 🔴"
+        df_score += dr_score
+        df_items.append({"type": "同步", "label": "资产负债率", "value": f"{debt_ratio:.1f}%", "score": dr_score, "max": 10,
+                         "verdict": dr_verdict})
+
+    # 同步：流动比率
+    current_ratio = _flt(lat.get("流动比率(%)"))
+    if current_ratio is not None:
+        cr_val = current_ratio / 100  # akshare返回百分比
+        if cr_val > 2.0:
+            cr_score = 8
+            cr_verdict = "非常充裕 ✅"
+        elif cr_val > 1.5:
+            cr_score = 6
+            cr_verdict = "安全 🟢"
+        elif cr_val > 1.0:
+            cr_score = 4
+            cr_verdict = "及格 🟡"
+        else:
+            cr_score = 1
+            cr_verdict = "不足 🔴"
+        df_score += cr_score
+        df_items.append({"type": "同步", "label": "流动比率", "value": f"{cr_val:.2f}", "score": cr_score, "max": 8,
+                         "verdict": cr_verdict})
+
+    # 滞后：ROIC vs 融资成本（隐含判断）
+    roic = _flt(lat.get("投入资本回报率(%)"))
+    if roic is not None:
+        if roic > 10:
+            roic_score = 8
+            roic_verdict = "资本回报优秀 ✅"
+        elif roic > 5:
+            roic_score = 5
+            roic_verdict = "回报合理 🟢"
+        else:
+            roic_score = 2
+            roic_verdict = "回报偏低 ⚠️"
+        df_score += roic_score
+        df_items.append({"type": "滞后", "label": "ROIC", "value": f"{roic:.2f}%", "score": roic_score, "max": 8,
+                         "verdict": roic_verdict})
+
+    contradictions.append({
+        "id": "debt_safety",
+        "name": "负债扩张 vs 财务安全",
+        "icon": "🏛️",
+        "desc": "加杠杆是否带来超额回报",
+        "score": round(df_score, 1),
+        "max": 34,
+        "pct": round(df_score / 34 * 100, 1),
+        "level": "alert" if df_score >= 24 else ("warn" if df_score >= 16 else "normal"),
+        "items": df_items,
+        "transformation": "当ROIC持续>融资成本且负债率<50%时，适度加杠杆有利" if (debt_ratio or 0) < 50 else
+                          "当利率上升或ROIC下降时，高杠杆风险加剧",
+    })
+
+    # === 矛盾⑤ 行业景气 vs 个股地位 ===
+    ii_items = []
+    ii_score = 0
+
+    # 先行：板块热度
+    if industry:
+        avg_chg = industry.get("avg_change", 0) or 0
+        up_ratio = industry.get("up_ratio", 0) or 0
+        rank = industry.get("rank", 0) or 0
+        total_sectors = industry.get("total_sectors", 0) or 1
+
+        # 板块涨幅热度
+        if avg_chg > 2:
+            sector_score = 8
+            sec_verdict = "板块强势 🔥"
+        elif avg_chg > 0:
+            sector_score = 5
+            sec_verdict = "板块温和"
+        elif avg_chg > -2:
+            sector_score = 3
+            sec_verdict = "板块偏弱"
+        else:
+            sector_score = 1
+            sec_verdict = "板块弱势 ❄️"
+        ii_score += sector_score
+        ii_items.append({"type": "先行", "label": "板块平均涨幅", "value": f"{avg_chg:+.2f}%", "score": sector_score, "max": 8,
+                         "verdict": sec_verdict})
+
+        # 上涨占比
+        if up_ratio > 70:
+            ur_score = 6
+            ur_verdict = "普涨行情 ✅"
+        elif up_ratio > 50:
+            ur_score = 4
+            ur_verdict = "涨多跌少"
+        elif up_ratio > 30:
+            ur_score = 2
+            ur_verdict = "分化明显"
+        else:
+            ur_score = 1
+            ur_verdict = "普跌 ❌"
+        ii_score += ur_score
+        ii_items.append({"type": "同步", "label": "板块上涨占比", "value": f"{up_ratio:.1f}%", "score": ur_score, "max": 6,
+                         "verdict": ur_verdict})
+
+        # 排名分位
+        rank_pct = rank / total_sectors if total_sectors > 0 else 0.5
+        if rank_pct < 0.2:
+            rk_score = 8
+            rk_verdict = "板块排名前列 🏆"
+        elif rank_pct < 0.4:
+            rk_score = 6
+            rk_verdict = "板块排名中上 ✅"
+        elif rank_pct < 0.6:
+            rk_score = 4
+            rk_verdict = "板块排名中游"
+        else:
+            rk_score = 1
+            rk_verdict = "板块排名靠后"
+        ii_score += rk_score
+        ii_items.append({"type": "滞后", "label": "板块排名", "value": f"#{rank}/{total_sectors}", "score": rk_score, "max": 8,
+                         "verdict": rk_verdict})
+
+    # 个股 vs 板块 相对强弱
+    if chg_pct is not None and industry:
+        avg_chg = industry.get("avg_change", 0) or 0
+        relative = chg_pct - avg_chg
+        if relative > 3:
+            rel_score = 8
+            rel_verdict = "显著强于板块 💪"
+        elif relative > 0:
+            rel_score = 5
+            rel_verdict = "略强于板块"
+        elif relative > -3:
+            rel_score = 3
+            rel_verdict = "弱于板块"
+        else:
+            rel_score = 1
+            rel_verdict = "显著弱于板块 ⚠️"
+        ii_score += rel_score
+        ii_items.append({"type": "同步", "label": "个股vs板块", "value": f"{relative:+.2f}pp", "score": rel_score, "max": 8,
+                         "verdict": rel_verdict})
+
+    contradictions.append({
+        "id": "industry_position",
+        "name": "行业景气 vs 个股地位",
+        "icon": "🔭",
+        "desc": "行业β收益 vs 个股α收益",
+        "score": round(ii_score, 1),
+        "max": 30,
+        "pct": round(ii_score / 30 * 100, 1),
+        "level": "alert" if ii_score >= 21 else ("warn" if ii_score >= 14 else "normal"),
+        "items": ii_items,
+        "transformation": "当板块持续走强但个股滞涨时，可能是补涨机会或基本面瑕疵" if (relative if 'relative' in dir() else 0) < 0 else
+                          "当板块转弱但个股抗跌时，可能存在个股α",
+    })
+
+    # ---- 3. 思维模型注入 ----
+    # 3a. 生命周期判定
+    rev_growth_val = _flt(lat.get("主营业务收入增长率(%)")) or 0
+    profit_growth_val = _flt(lat.get("净利润增长率(%)")) or 0
+    asset_growth_val = _flt(lat.get("总资产增长率(%)")) or 0
+    gross_margin_val = _flt(lat.get("销售毛利率(%)")) or 0
+    ocf_profit_val = _flt(lat.get("经营现金净流量与净利润的比率(%)")) or 0
+
+    if rev_growth_val > 20 and profit_growth_val > 20:
+        lifecycle = {"stage": "成长期", "icon": "🌱", "desc": "营收+利润双高增长，处于快速扩张阶段",
+                     "implication": "适合PEG估值，关注增速持续性而非绝对PE",
+                     "models": ["生命周期", "复利效应", "红皇后效应"]}
+    elif rev_growth_val > 5 and profit_growth_val > 0:
+        lifecycle = {"stage": "成熟期", "icon": "🌳", "desc": "增长放缓但盈利稳定，进入成熟阶段",
+                     "implication": "适合PE+股息率估值，关注护城河宽度",
+                     "models": ["生命周期", "护城河", "规模效应"]}
+    elif rev_growth_val < -5 or profit_growth_val < -10:
+        lifecycle = {"stage": "衰退期", "icon": "🍂", "desc": "增长下滑，需警惕基本面恶化",
+                     "implication": "适合PB+清算价值，关注转型可能性和现金储备",
+                     "models": ["生命周期", "熵增定律", "创造性破坏"]}
+    else:
+        lifecycle = {"stage": "调整期", "icon": "🔄", "desc": "增速放缓后的调整或转型期",
+                     "implication": "需区分是暂时调整还是长期下滑，关注拐点信号",
+                     "models": ["生命周期", "均值回归", "反馈回路"]}
+
+    # 3b. 为每个矛盾对注入关联思维模型
+    _MODELS_MAP = {
+        "price_value": {
+            "models": ["势能", "均值回归", "锚定效应"],
+            "desc": "价格偏离价值越远，回归势能越大"
+        },
+        "growth_valuation": {
+            "models": ["复利效应", "生命周期", "边际效用递减"],
+            "desc": "高增长终将放缓，复利曲线在成长期最陡峭"
+        },
+        "quality_cashflow": {
+            "models": ["熵增定律", "滞后效应", "反馈回路"],
+            "desc": "利润质量熵增不可持续，现金流滞后反映真实状况"
+        },
+        "debt_safety": {
+            "models": ["杠杆/支点", "红皇后效应", "路径依赖"],
+            "desc": "杠杆=双刃剑，ROIC>利率则正向放大，反之加速毁灭"
+        },
+        "industry_position": {
+            "models": ["生态位", "进化论", "涌现"],
+            "desc": "个股α=在行业生态位中的适应性，板块β=群体行为涌现"
+        },
+    }
+    for con in contradictions:
+        m = _MODELS_MAP.get(con["id"], {})
+        con["models"] = m.get("models", [])
+        con["models_desc"] = m.get("desc", "")
+
+    # 3c. 反馈回路分析
+    chg_trend = None
+    if chg3d is not None:
+        if chg3d > 5 and chg_pct is not None and chg_pct > 0:
+            chg_trend = "正反馈 🔁"
+            chg_trend_desc = "连续上涨强化上涨预期，趋势自我加强中。需警惕高潮后的均值回归"
+        elif chg3d < -5 and chg_pct is not None and chg_pct < 0:
+            chg_trend = "负反馈 🔄"
+            chg_trend_desc = "连续下跌强化下跌预期，恐慌可能过度。关注反转信号"
+        else:
+            chg_trend = "均衡态 ⚖️"
+            chg_trend_desc = "多空力量相对均衡，等待催化剂打破平衡"
+
+    # 3d. 行为金融偏误提示
+    behavioral_biases = []
+    # 从数据中推断常见偏误
+    if chg3d is not None and abs(chg3d) > 10:
+        behavioral_biases.append({
+            "bias": "从众效应",
+            "icon": "🐑",
+            "trigger": f"3日振幅{abs(chg3d):.1f}%",
+            "warning": "短期剧烈波动时容易跟风操作，警惕群体情绪放大"
+        })
+    if pe is not None and pe < 15 and rev_growth_val > 20:
+        behavioral_biases.append({
+            "bias": "确认偏误",
+            "icon": "🔄",
+            "trigger": f"PE={pe:.0f}×成长={rev_growth_val:.1f}%",
+            "warning": "低PE+高成长容易过度乐观，忽略利润质量等潜在风险"
+        })
+    if pe is not None and pe > 50:
+        behavioral_biases.append({
+            "bias": "锚定效应",
+            "icon": "⚓",
+            "trigger": f"PE={pe:.0f}×",
+            "warning": "高PE可能被「这次不一样」的叙事锚定，历史均值终究回归"
+        })
+    if profit_growth_val < -10 and rev_growth_val > 5:
+        behavioral_biases.append({
+            "bias": "损失厌恶",
+            "icon": "💔",
+            "trigger": "增收不增利",
+            "warning": "收入增长但利润下滑，投资者容易因「还有增长」而忽视盈利恶化"
+        })
+    if (ocf_profit_val or 0) < 30:
+        behavioral_biases.append({
+            "bias": "结果偏误",
+            "icon": "🎲",
+            "trigger": f"OCF/净利润={ocf_profit_val:.1f}%",
+            "warning": "账面利润好看但现金流差，容易被表面数字迷惑，忽略真实造血能力"
+        })
+
+    # ---- 4. 主次矛盾判定 ----
+    sorted_cons = sorted(contradictions, key=lambda c: c["score"], reverse=True)
+    primary = sorted_cons[0] if sorted_cons else None
+    secondary = sorted_cons[1] if len(sorted_cons) > 1 else None
+    third = sorted_cons[2] if len(sorted_cons) > 2 else None
+
+    # ---- 4. 矛盾转化条件 ----
+    transformation_triggers = []
+    for con in contradictions:
+        transformation_triggers.append({
+            "id": con["id"],
+            "name": con["name"],
+            "condition": con["transformation"],
+            "current_score": con["score"],
+            "is_primary": con["id"] == primary["id"] if primary else False,
+        })
+
+    # ---- 5. 总体研判 ----
+    total_max = sum(c["max"] for c in contradictions)
+    total_score = sum(c["score"] for c in contradictions)
+    total_pct = round(total_score / total_max * 100, 1) if total_max > 0 else 0
+
+    if total_pct >= 70:
+        overall = "整体健康 ✅"
+        overall_desc = "五大矛盾整体平衡，无明显系统性风险"
+    elif total_pct >= 50:
+        overall = "存在隐忧 ⚠️"
+        overall_desc = f"主要矛盾在「{primary['name']}」，需重点关注" if primary else ""
+    else:
+        overall = "风险偏高 🔴"
+        overall_desc = f"多个矛盾同时突出，建议谨慎，核心矛盾在「{primary['name']}」" if primary else ""
+
+    return {
+        "code": code,
+        "name": name,
+        "sector": sector or "",
+        "total_score": total_score,
+        "total_max": total_max,
+        "total_pct": total_pct,
+        "overall": overall,
+        "overall_desc": overall_desc,
+        "primary": {
+            "id": primary["id"],
+            "name": primary["name"],
+            "icon": primary["icon"],
+            "score": primary["score"],
+            "pct": primary["pct"],
+        } if primary else None,
+        "secondary": {
+            "id": secondary["id"],
+            "name": secondary["name"],
+            "icon": secondary["icon"],
+            "score": secondary["score"],
+            "pct": secondary["pct"],
+        } if secondary else None,
+        "third": {
+            "id": third["id"],
+            "name": third["name"],
+            "icon": third["icon"],
+            "score": third["score"],
+            "pct": third["pct"],
+        } if third else None,
+        "contradictions": contradictions,
+        "transformation_triggers": transformation_triggers,
+        "lifecycle": lifecycle,
+        "feedback_loop": {
+            "trend": chg_trend,
+            "desc": chg_trend_desc,
+        } if chg_trend else None,
+        "behavioral_biases": behavioral_biases,
+        "behavioral_biases": behavioral_biases,
+        "recommended_models": _recommend_mental_models(
+            code=code, name=name, sector=sector or "",
+            total_pct=total_pct, primary_name=(primary or {}).get("name",""),
+            pe=pe, chg_pct=chg_pct, chg3d=chg3d,
+            rev_growth=rev_growth, profit_growth=profit_growth,
+            roe=roe, mcap=mcap,
+            lifecycle_stage=(lifecycle or {}).get("stage",""),
+            industry_avg_chg=((industry or {}).get("avg_change") or 0),
+        ),
+    }
+
+@router.get("/{code}/contradiction")
+def contradiction_api(code: str):
+    """矛盾分析 API"""
+    result = _get_contradiction_analysis(code)
+    if not result:
+        raise HTTPException(status_code=404, detail="数据不足，无法分析")
+    return result
+
+
+# ============================================================
+# 8. 三张财务报表
 # ============================================================
 # 字段名→中文标签映射
 _BS_LABELS = {
@@ -1264,7 +2551,7 @@ def _get_industry_from_code(code: str) -> str:
         d = (today - timedelta(days=i)).isoformat()
         path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
         if path.exists():
-            df = pd.read_csv(path, encoding="utf-16", sep="\t", engine="python")
+            df = pd.read_csv(path, encoding="utf-16", sep="	", engine="python")
             df["代码"] = df["代码"].astype(str).str.strip("'\"")
             match = df[df["代码"] == code]
             if not match.empty:
@@ -1281,7 +2568,7 @@ def _get_all_stocks_in_industry(industry: str) -> list[str]:
         d = (today - timedelta(days=i)).isoformat()
         path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
         if path.exists():
-            df = pd.read_csv(path, encoding="utf-16", sep="\t", engine="python")
+            df = pd.read_csv(path, encoding="utf-16", sep="	", engine="python")
             df["代码"] = df["代码"].astype(str).str.strip("'\"")
             match = df[df["所属行业"] == industry].copy()
             if not match.empty:

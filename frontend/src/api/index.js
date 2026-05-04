@@ -64,6 +64,12 @@ export function getFinancialStatements(code) {
 export function getComprehensiveAnalysis(code) {
     return api.get(`/fundamental/comprehensive/${code}`)
 }
+export function getSupplyChain(code) {
+    return api.get(`/fundamental/${code}/supply_chain`)
+}
+export function getContradiction(code) {
+    return api.get(`/fundamental/${code}/contradiction`)
+}
 
 // ========== 档案 ==========
 export function getStockProfile(code) {

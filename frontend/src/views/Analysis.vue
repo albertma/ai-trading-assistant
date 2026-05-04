@@ -466,6 +466,126 @@
                 <el-empty v-else-if="!comprehensiveLoading" description="暂无综合评估数据" />
             </el-tab-pane>
 
+            <!-- Tab 3a: 矛盾分析 -->
+            <el-tab-pane label="⚖️ 矛盾分析" name="contradiction">
+                <div v-if="contradictionLoading" style="text-align:center;padding:40px;">
+                    <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+                    <p style="color:#909399;margin-top:8px;">加载矛盾分析...</p>
+                </div>
+                <template v-else-if="contradictionData">
+                    <!-- 总分 -->
+                    <el-card shadow="hover" style="margin-bottom:16px;border:1px solid #334;"
+                        :style="{ background: contradictionData.total_pct >= 60 ? 'linear-gradient(135deg, #2e1a1a, #1a1a2e)' : contradictionData.total_pct >= 40 ? 'linear-gradient(135deg, #2e2a1a, #1a1a2e)' : 'linear-gradient(135deg, #1a2e1a, #1a1a2e)' }">
+                        <div style="display:flex;align-items:center;justify-content:space-between;">
+                            <div style="display:flex;align-items:center;gap:12px;">
+                                <span style="font-size:32px;">{{ contradictionData.overall?.includes('🔴') ? '🔴' : contradictionData.overall?.includes('🟡') ? '🟡' : '🟢' }}</span>
+                                <div>
+                                    <span style="font-size:20px;font-weight:bold;color:#e0e0e0;">矛盾综合评分</span>
+                                    <span style="font-size:28px;font-weight:bold;margin-left:12px;color:#e6a23c;">{{ contradictionData.total_score }}</span>
+                                    <span style="color:#909399;font-size:14px;">/ {{ contradictionData.total_max }}</span>
+                                </div>
+                                <el-tag :type="contradictionData.total_pct >= 60 ? 'danger' : contradictionData.total_pct >= 40 ? 'warning' : 'success'" size="medium" effect="dark">
+                                    {{ contradictionData.overall || '--' }}
+                                </el-tag>
+                            </div>
+                            <div style="font-size:28px;font-weight:bold;color:#e0e0e0;">{{ contradictionData.total_pct }}%</div>
+                        </div>
+                        <div style="margin-top:8px;font-size:13px;color:#b0b0b0;">{{ contradictionData.overall_desc }}</div>
+                    </el-card>
+
+                    <!-- 三大核心矛盾 -->
+                    <el-row :gutter="12" style="margin-bottom:16px;">
+                        <el-col :span="8" v-for="item in [contradictionData.primary, contradictionData.secondary, contradictionData.third]" :key="item?.id" style="margin-bottom:12px;">
+                            <el-card shadow="hover" style="height:100%;border:1px solid #2a2a3e;cursor:pointer;"
+                                :style="item?.pct >= 60 ? 'border-left:3px solid #f56c6c;' : item?.pct >= 40 ? 'border-left:3px solid #e6a23c;' : 'border-left:3px solid #67c23a;'"
+                                @click="selectedContradiction = selectedContradiction?.id === item?.id ? null : item">
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                                    <span style="font-size:20px;">{{ item?.icon || '⚡' }}</span>
+                                    <span :style="{ color: (item?.pct||0) >= 60 ? '#f56c6c' : (item?.pct||0) >= 40 ? '#e6a23c' : '#67c23a', fontWeight:'bold', fontSize:'18px' }">
+                                        {{ item?.score }}/{{ item?.max || 100 }}
+                                    </span>
+                                </div>
+                                <div style="font-size:14px;font-weight:bold;color:#ccc;margin-bottom:6px;">{{ item?.name }}</div>
+                                <div style="height:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden;">
+                                    <div :style="{ width: (item?.pct||0)+'%', height:'4px', background: (item?.pct||0) >= 60 ? '#f56c6c' : (item?.pct||0) >= 40 ? '#e6a23c' : '#67c23a', borderRadius:'2px' }"></div>
+                                </div>
+                            </el-card>
+                        </el-col>
+                    </el-row>
+
+                    <!-- 选中矛盾的详细展开 -->
+                    <el-card v-if="selectedContradiction" shadow="hover" style="margin-bottom:16px;border:1px solid #3a3a4e;">
+                        <template #header>
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <b>{{ selectedContradiction.icon }} {{ selectedContradiction.name }}</b>
+                                <el-tag :type="selectedContradiction.pct >= 60 ? 'danger' : selectedContradiction.pct >= 40 ? 'warning' : 'success'" size="small">
+                                    矛盾度 {{ selectedContradiction.pct }}%
+                                </el-tag>
+                            </div>
+                        </template>
+                        <p style="color:#b0b0b0;font-size:13px;margin-bottom:12px;">{{ selectedContradiction.desc }}</p>
+                        <el-table :data="selectedContradiction.items || []" border size="small" style="width:100%;margin-bottom:12px;">
+                            <el-table-column label="类型" width="70">
+                                <template #default="{ row }">
+                                    <el-tag size="small" :type="row.type === '同步' ? 'primary' : row.type === '先行' ? 'warning' : 'info'">{{ row.type }}</el-tag>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="指标" width="110" prop="label" />
+                            <el-table-column label="数值" width="90" prop="value" />
+                            <el-table-column label="评分" width="90">
+                                <template #default="{ row }">
+                                    <span :style="{ color: row.score >= row.max*0.65 ? '#67c23a' : row.score >= row.max*0.35 ? '#e6a23c' : '#f56c6c', fontWeight:'bold' }">
+                                        {{ row.score }}/{{ row.max }}
+                                    </span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="结论" min-width="140" prop="verdict" />
+                        </el-table>
+                        <el-alert v-if="selectedContradiction.transformation" :title="'🔄 转化路径: ' + selectedContradiction.transformation"
+                            type="info" :closable="false" show-icon style="margin-bottom:8px;" />
+                        <div v-if="selectedContradiction.models?.length" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+                            <span style="color:#909399;font-size:12px;line-height:24px;">推荐模型:</span>
+                            <el-tag v-for="m in selectedContradiction.models" :key="m" size="small" type="warning" effect="plain">{{ m }}</el-tag>
+                        </div>
+                    </el-card>
+
+                    <!-- 所有矛盾列表 -->
+                    <el-card shadow="hover">
+                        <template #header><b>📋 全部矛盾项（{{ contradictionData.contradictions?.length || 0 }}项）</b></template>
+                        <el-collapse v-if="contradictionData.contradictions?.length">
+                            <el-collapse-item v-for="(c, i) in contradictionData.contradictions" :key="c.id" :title="c.icon + ' ' + c.name" :name="c.id">
+                                <p style="color:#b0b0b0;font-size:13px;margin-bottom:8px;">{{ c.desc }}</p>
+                                <el-table :data="c.items || []" border size="small" style="width:100%;margin-bottom:8px;">
+                                    <el-table-column label="类型" width="70">
+                                        <template #default="{ row }">
+                                            <el-tag size="small" :type="row.type === '同步' ? 'primary' : row.type === '先行' ? 'warning' : 'info'">{{ row.type }}</el-tag>
+                                        </template>
+                                    </el-table-column>
+                                    <el-table-column label="指标" width="110" prop="label" />
+                                    <el-table-column label="数值" width="90" prop="value" />
+                                    <el-table-column label="评分" width="90">
+                                        <template #default="{ row }">
+                                            <span :style="{ color: row.score >= row.max*0.65 ? '#67c23a' : row.score >= row.max*0.35 ? '#e6a23c' : '#f56c6c', fontWeight:'bold' }">
+                                                {{ row.score }}/{{ row.max }}
+                                            </span>
+                                        </template>
+                                    </el-table-column>
+                                    <el-table-column label="结论" min-width="140" prop="verdict" />
+                                </el-table>
+                                <el-alert v-if="c.transformation" :title="'🔄 转化路径: ' + c.transformation"
+                                    type="info" :closable="false" show-icon style="margin-bottom:8px;" />
+                                <div v-if="c.models?.length" style="display:flex;gap:6px;flex-wrap:wrap;">
+                                    <span style="color:#909399;font-size:12px;line-height:24px;">推荐模型:</span>
+                                    <el-tag v-for="m in c.models" :key="m" size="small" type="warning" effect="plain">{{ m }}</el-tag>
+                                </div>
+                            </el-collapse-item>
+                        </el-collapse>
+                        <el-empty v-else description="暂无详细矛盾数据" />
+                    </el-card>
+                </template>
+                <el-empty v-else-if="!contradictionLoading" description="暂无矛盾分析数据" />
+            </el-tab-pane>
+
             <!-- Tab 3b: 杜邦分析 -->
             <el-tab-pane label="📐 杜邦分析" name="dupont">
                 <div v-if="dupontLoading" style="text-align:center;padding:40px;"><el-icon class="is-loading" :size="32"><Loading /></el-icon></div>
@@ -572,32 +692,222 @@
                 <el-empty v-else-if="!dupontLoading" description="暂无杜邦分析数据" />
             </el-tab-pane>
 
-            <!-- Tab 4: 行业前瞻 -->
+            <!-- Tab 4: 行业前瞻 — 景气周期 + 供需矛盾(产业链逐环节) + 量化预测 -->
             <el-tab-pane label="🔭 行业前瞻" name="industry">
-                <template v-if="fundData?.industry_outlook">
-                    <el-card shadow="hover" style="margin-bottom:16px;">
-                        <template #header><b>{{ fundData.industry_outlook.sector }}</b></template>
-                        <el-descriptions :column="3" border size="small">
-                            <el-descriptions-item label="板块排名">
-                                <el-tag :type="(fundData.industry_outlook.rank||0) <= 20 ? 'success' : (fundData.industry_outlook.rank||0) <= 60 ? 'warning' : 'info'" size="small">
-                                    #{{ fundData.industry_outlook.rank }}/{{ fundData.industry_outlook.total_sectors }}
-                                </el-tag>
-                            </el-descriptions-item>
-                            <el-descriptions-item label="平均涨幅">
-                                <span :style="{ color: (fundData.industry_outlook.avg_change||0) >= 0 ? '#f56c6c' : '#67c23a' }">{{ fundData.industry_outlook.avg_change }}%</span>
-                            </el-descriptions-item>
-                            <el-descriptions-item label="上涨占比">{{ fundData.industry_outlook.up_ratio }}%</el-descriptions-item>
-                            <el-descriptions-item label="成份股数">{{ fundData.industry_outlook.stock_count }} 只</el-descriptions-item>
-                            <el-descriptions-item label="走势">
-                                <el-tag :type="(fundData.industry_outlook.avg_change||0) >= 1 ? 'danger' : (fundData.industry_outlook.avg_change||0) <= -1 ? 'success' : 'info'" size="small">
-                                    {{ (fundData.industry_outlook.avg_change||0) >= 1 ? '🔥 强势' : (fundData.industry_outlook.avg_change||0) <= -1 ? '❄️ 弱势' : '→ 震荡' }}
-                                </el-tag>
-                            </el-descriptions-item>
-                        </el-descriptions>
-                    </el-card>
-                    <el-card shadow="hover">
+                <!-- 加载中状态：进度条 + 加载阶段标签 -->
+                <div v-if="industryLoading" style="padding:30px;text-align:center;">
+                    <el-progress :percentage="Math.min(industryLoadProgress, 100)" :stroke-width="10" :text-inside="true" :status="industryLoadProgress >= 100 ? 'success' : ''" style="max-width:500px;margin:0 auto 16px;" />
+                    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+                        <el-tag v-for="tag in industryLoadTags" :key="tag" type="success" effect="plain" size="small">
+                            ✅ {{ tag }}
+                        </el-tag>
+                        <el-tag v-if="industryLoadTags.length < 5" type="info" effect="plain" size="small">
+                            <el-icon class="is-loading" :size="12"><Loading /></el-icon> 分析中...
+                        </el-tag>
+                    </div>
+                    <p style="color:#909399;margin-top:12px;font-size:13px;">正在综合分析行业数据...</p>
+                </div>
+
+                <!-- 数据加载完成之后 -->
+                <template v-else-if="fundData?.industry_outlook || industrySupplyData">
+                    <div v-if="!hasIndustryData" style="text-align:center;padding:30px;color:#909399;">
+                        <el-empty description="该标的不在行业分类中，暂无行业前瞻数据" />
+                    </div>
+
+                    <!-- ====== 卡片1: 行业景气周期 ====== -->
+                    <template v-if="cycleAnalysis">
+                        <el-card shadow="hover" style="margin-bottom:16px;border:1px solid #334;">
+                            <template #header>
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <b>🏭 行业景气周期</b>
+                                    <el-tag :type="cycleAnalysis.cycle_score >= 70 ? 'danger' : cycleAnalysis.cycle_score >= 50 ? 'warning' : 'info'" size="medium" effect="dark">
+                                        {{ cycleAnalysis.cycle_stage }}
+                                    </el-tag>
+                                </div>
+                            </template>
+                            <el-row :gutter="16">
+                                <el-col :span="6">
+                                    <el-statistic title="景气评分" :value="cycleAnalysis.cycle_score" suffix="分" />
+                                </el-col>
+                                <el-col :span="12">
+                                    <p style="color:#b0b0b0;font-size:13px;margin:0;line-height:1.6;">{{ cycleAnalysis.cycle_desc }}</p>
+                                </el-col>
+                                <el-col :span="6">
+                                    <el-alert :title="cycleAnalysis.cycle_risk" type="warning" :closable="false" show-icon style="font-size:12px;" />
+                                </el-col>
+                            </el-row>
+                            <!-- 板块概览小卡片 -->
+                            <el-divider />
+                            <el-row :gutter="12">
+                                <el-col :span="6">
+                                    <div style="text-align:center;">
+                                        <div style="font-size:24px;font-weight:bold;color:#e6a23c;">#{{ industryOutlook?.rank }}/{{ industryOutlook?.total_sectors }}</div>
+                                        <div style="font-size:12px;color:#909399;">板块排名</div>
+                                    </div>
+                                </el-col>
+                                <el-col :span="6">
+                                    <div style="text-align:center;">
+                                        <div style="font-size:24px;font-weight:bold;" :style="{ color: (industryOutlook?.avg_change||0) >= 0 ? '#f56c6c' : '#67c23a' }">{{ industryOutlook?.avg_change }}%</div>
+                                        <div style="font-size:12px;color:#909399;">平均涨幅</div>
+                                    </div>
+                                </el-col>
+                                <el-col :span="6">
+                                    <div style="text-align:center;">
+                                        <div style="font-size:24px;font-weight:bold;color:#67c23a;">{{ industryOutlook?.up_ratio }}%</div>
+                                        <div style="font-size:12px;color:#909399;">上涨占比</div>
+                                    </div>
+                                </el-col>
+                                <el-col :span="6">
+                                    <div style="text-align:center;">
+                                        <div style="font-size:24px;font-weight:bold;color:#409eff;">{{ industryOutlook?.stock_count }}</div>
+                                        <div style="font-size:12px;color:#909399;">成份股数</div>
+                                    </div>
+                                </el-col>
+                            </el-row>
+                        </el-card>
+                    </template>
+
+                    <!-- ====== 卡片2: 供需矛盾 — 产业链逐环节分析 ====== -->
+                    <template v-if="chainAnalysis && chainAnalysis.length > 0">
+                        <el-card shadow="hover" style="margin-bottom:16px;border:1px solid #334;">
+                            <template #header>
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <b>🔗 供需矛盾 — 产业链逐环节分析</b>
+                                    <div>
+                                        <el-tag type="info" size="small" effect="plain" style="margin-right:8px;">
+                                            综合评分 {{ cycleAnalysis?.supply_score }}
+                                        </el-tag>
+                                        <el-tag :type="(cycleAnalysis?.supply_score||0) >= 70 ? 'danger' : (cycleAnalysis?.supply_score||0) >= 45 ? 'warning' : 'success'" size="small">
+                                            {{ (cycleAnalysis?.supply_score||0) >= 70 ? '矛盾突出' : (cycleAnalysis?.supply_score||0) >= 45 ? '局部矛盾' : '供需平衡' }}
+                                        </el-tag>
+                                    </div>
+                                </div>
+                            </template>
+                            <div style="font-size:13px;color:#b0b0b0;margin-bottom:12px;">
+                                <el-tag size="small" type="info" effect="plain" style="margin-right:4px;">📊 概览</el-tag>
+                                {{ cycleAnalysis?.supply_outlook }}
+                            </div>
+                            <el-alert v-if="cycleAnalysis?.supply_desc" :title="cycleAnalysis.supply_desc" type="info" :closable="false" show-icon style="margin-bottom:16px;font-size:12px;" />
+                            
+                            <!-- 产业链各环节 -->
+                            <el-collapse v-model="activeChainStage" accordion>
+                                <el-collapse-item v-for="(stage, i) in chainAnalysis" :key="stage.stage" :name="String(i)" :title="stageTitle(stage)">
+                                    <template #title>
+                                        <div style="display:flex;align-items:center;gap:8px;flex:1;">
+                                            <b>{{ stage.stage }}</b>
+                                            <el-tag :type="stage.status_score >= 70 ? 'danger' : stage.status_score >= 45 ? 'warning' : 'success'" size="small" effect="dark">
+                                                {{ stage.status }}
+                                            </el-tag>
+                                            <span style="font-size:12px;color:#909399;margin-left:auto;">
+                                                评分 {{ stage.status_score }} · 涨幅 {{ stage.avg_change != null ? (stage.avg_change >= 0 ? '+' : '') + stage.avg_change + '%' : '--' }}
+                                            </span>
+                                        </div>
+                                    </template>
+                                    
+                                    <p style="color:#b0b0b0;font-size:13px;margin-bottom:8px;">{{ stage.desc }}</p>
+                                    <el-alert v-if="stage.opp_risk" :title="stage.opp_risk" :type="stage.opp_risk.includes('✅') || stage.opp_risk.includes('➡️') ? 'info' : 'warning'" :closable="false" show-icon style="margin-bottom:12px;font-size:12px;" />
+                                    
+                                    <!-- 该环节的概念板块明细 -->
+                                    <el-table v-if="stage.boards?.length" :data="stage.boards" border size="small" style="width:100%;">
+                                        <el-table-column label="概念板块" min-width="140" prop="name" />
+                                        <el-table-column label="涨幅" width="80">
+                                            <template #default="{ row }">
+                                                <span v-if="row.change_pct != null" :style="{ color: row.change_pct >= 0 ? '#f56c6c' : '#67c23a' }">
+                                                    {{ row.change_pct >= 0 ? '+' : '' }}{{ row.change_pct }}%
+                                                </span>
+                                                <span v-else style="color:#909399;">--</span>
+                                            </template>
+                                        </el-table-column>
+                                        <el-table-column label="上涨占比" width="90">
+                                            <template #default="{ row }">
+                                                <span v-if="row.up_ratio != null">{{ row.up_ratio }}%</span>
+                                                <span v-else style="color:#909399;">--</span>
+                                            </template>
+                                        </el-table-column>
+                                        <el-table-column label="领涨股" min-width="130">
+                                            <template #default="{ row }">
+                                                <span v-if="row.leader && row.leader !== '--'">{{ row.leader }}</span>
+                                                <span v-else style="color:#909399;">--</span>
+                                            </template>
+                                        </el-table-column>
+                                        <el-table-column label="领涨涨幅" width="90">
+                                            <template #default="{ row }">
+                                                <span v-if="row.leader_chg != null" :style="{ color: row.leader_chg >= 0 ? '#f56c6c' : '#67c23a' }">
+                                                    {{ row.leader_chg >= 0 ? '+' : '' }}{{ row.leader_chg }}%
+                                                </span>
+                                                <span v-else style="color:#909399;">--</span>
+                                            </template>
+                                        </el-table-column>
+                                        <el-table-column label="供需状态" width="100">
+                                            <template #default="{ row }">
+                                                <el-tag size="small" :type="(row.supply_demand||0) >= 70 ? 'danger' : (row.supply_demand||0) >= 45 ? 'warning' : 'success'">
+                                                    {{ row.supply_demand || '--' }}
+                                                </el-tag>
+                                            </template>
+                                        </el-table-column>
+                                    </el-table>
+                                    <el-empty v-else description="暂无该环节概念板块数据" :image-size="60" />
+                                </el-collapse-item>
+                            </el-collapse>
+                        </el-card>
+                    </template>
+                    <el-empty v-else-if="!cycleAnalysis && !hasIndustryData" description="暂无产业链数据" :image-size="60" />
+
+                    <!-- ====== 卡片3: 量化预测 ====== -->
+                    <template v-if="cycleAnalysis">
+                        <el-card shadow="hover" style="margin-bottom:16px;border:1px solid #334;">
+                            <template #header>
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <b>📊 量化预测</b>
+                                    <el-tag :type="(cycleAnalysis.outlook_score||0) >= 65 ? 'success' : (cycleAnalysis.outlook_score||0) >= 45 ? 'warning' : 'danger'" size="medium" effect="dark">
+                                        {{ cycleAnalysis.outlook_label }}
+                                    </el-tag>
+                                </div>
+                            </template>
+                            <el-row :gutter="16" style="margin-bottom:12px;">
+                                <el-col :span="8">
+                                    <el-statistic title="综合评分" :value="cycleAnalysis.outlook_score" suffix="分" />
+                                </el-col>
+                                <el-col :span="8">
+                                    <el-statistic title="方向判断" :value="cycleAnalysis.outlook_dir" :value-style="{ fontSize: '20px', fontWeight: 'bold' }" />
+                                </el-col>
+                                <el-col :span="8">
+                                    <div style="font-size:12px;color:#909399;">综合景气(×0.5)+供需(×0.3)+排名(×0.2)</div>
+                                </el-col>
+                            </el-row>
+                            <el-alert :title="'📈 短期判断: ' + cycleAnalysis.short_term" type="info" :closable="false" show-icon style="font-size:12px;" />
+                        </el-card>
+
+                        <!-- 思维模型卡片 -->
+                        <el-card shadow="hover" style="border:1px solid #334;">
+                            <template #header><b>🧠 分析思维模型</b></template>
+                            <el-row :gutter="12">
+                                <el-col :span="8">
+                                    <el-card shadow="never" style="background:rgba(255,255,255,0.03);height:100%;">
+                                        <div style="font-size:16px;margin-bottom:6px;">🏭 行业景气周期</div>
+                                        <p style="font-size:12px;color:#b0b0b0;line-height:1.6;">通过板块涨幅、上涨占比、排名等判定处于过热/扩张/复苏/调整/衰退哪个阶段，判断行业方向的基座模型</p>
+                                    </el-card>
+                                </el-col>
+                                <el-col :span="8">
+                                    <el-card shadow="never" style="background:rgba(255,255,255,0.03);height:100%;">
+                                        <div style="font-size:16px;margin-bottom:6px;">🔗 供需矛盾分析</div>
+                                        <p style="font-size:12px;color:#b0b0b0;line-height:1.6;">沿产业链上游→中游→下游，逐一分析各环节供需状态、资金流向，定位卡脖子环节与薄弱环节</p>
+                                    </el-card>
+                                </el-col>
+                                <el-col :span="8">
+                                    <el-card shadow="never" style="background:rgba(255,255,255,0.03);height:100%;">
+                                        <div style="font-size:16px;margin-bottom:6px;">📊 二阶效应</div>
+                                        <p style="font-size:12px;color:#b0b0b0;line-height:1.6;">行业趋势的传导效应：上游涨价→中游成本承压→下游终端传导，寻找二阶机会与风险位置</p>
+                                    </el-card>
+                                </el-col>
+                            </el-row>
+                        </el-card>
+                    </template>
+
+                    <!-- 龙头股 -->
+                    <el-card v-if="industryOutlook?.top_stocks?.length" shadow="hover" style="margin-top:16px;">
                         <template #header><b>🏆 板块龙头股</b></template>
-                        <el-table :data="fundData.industry_outlook.top_stocks || []" border size="small" style="width:100%">
+                        <el-table :data="industryOutlook.top_stocks" border size="small" style="width:100%">
                             <el-table-column prop="name" label="名称" width="120" />
                             <el-table-column prop="price" label="现价" width="100">
                                 <template #default="{ row }">{{ row.price?.toFixed(2) }}</template>
@@ -614,7 +924,7 @@
                         </el-table>
                     </el-card>
                 </template>
-                <el-empty v-else description="暂无行业数据" />
+                <el-empty v-else-if="!industryLoading" description="暂无行业数据" />
             </el-tab-pane>
 
             <!-- Tab 4: 档案 -->
@@ -940,7 +1250,7 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick, watch, onBeforeUnmount, inject } from 'vue'
-import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary, getExpenseAnalysis, getFinancialStatements, getComprehensiveAnalysis } from '../api/index.js'
+import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary, getExpenseAnalysis, getFinancialStatements, getComprehensiveAnalysis, getContradiction } from '../api/index.js'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import * as echarts from 'echarts'
@@ -965,6 +1275,24 @@ const allFailedRules = computed(() => {
 
 const fundData = ref(null)
 const fundLoading = ref(false)
+const industryLoadProgress = ref(0)
+const industryLoadTags = ref([])
+let industryLoadTimer = null
+const contradictionData = ref(null)
+const contradictionLoading = ref(false)
+const selectedContradiction = ref(null)
+const industryLoading = ref(false)
+const industrySupplyData = ref(null)
+const activeChainStage = ref('0')
+
+const cycleAnalysis = computed(() => fundData.value?.industry_outlook?.cycle_analysis || null)
+const industryOutlook = computed(() => fundData.value?.industry_outlook || null)
+const chainAnalysis = computed(() => cycleAnalysis.value?.chain_analysis || [])
+const hasIndustryData = computed(() => !!(industryOutlook.value || industrySupplyData.value))
+
+function stageTitle(stage) {
+    return `${stage.stage} · ${stage.status} · 评分${stage.status_score}`
+}
 const expenseData = ref(null)
 const expenseLoading = ref(false)
 const statementsVisible = ref(false)
@@ -1028,6 +1356,38 @@ function formatVal(v) {
     }
     return v
 }
+function startIndustryProgress() {
+    industryLoadProgress.value = 0
+    industryLoadTags.value = []
+    const stages = ['板块排名', '景气周期', '产业链供需', '龙头统计', '供应链']
+    let idx = 0
+    if (industryLoadTimer) clearInterval(industryLoadTimer)
+    industryLoadTimer = setInterval(() => {
+        if (industryLoadProgress.value < 90) {
+            industryLoadProgress.value += Math.random() * 8 + 2
+            if (industryLoadProgress.value > 90) industryLoadProgress.value = 90
+        }
+        if (idx < stages.length && industryLoadProgress.value > idx * 18 + 5) {
+            if (!industryLoadTags.value.includes(stages[idx])) {
+                industryLoadTags.value.push(stages[idx])
+                idx++
+            }
+        }
+    }, 400)
+}
+
+function stopIndustryProgress() {
+    if (industryLoadTimer) {
+        clearInterval(industryLoadTimer)
+        industryLoadTimer = null
+    }
+    industryLoadProgress.value = 100
+    setTimeout(() => {
+        industryLoadProgress.value = 0
+        industryLoadTags.value = []
+    }, 800)
+}
+
 async function loadStatements() {
     const code = result.value?.code
     if (!code || statementsData.value) return
@@ -1052,6 +1412,19 @@ async function loadComprehensiveData() {
         console.error('综合评估加载失败', e)
     } finally {
         comprehensiveLoading.value = false
+    }
+}
+async function loadContradictionData() {
+    const code = result.value?.code
+    if (!code) return
+    contradictionLoading.value = true
+    try {
+        const { data } = await getContradiction(code)
+        contradictionData.value = data
+    } catch (e) {
+        console.error('矛盾分析加载失败', e)
+    } finally {
+        contradictionLoading.value = false
     }
 }
 const dupontData = ref(null)
@@ -1335,8 +1708,23 @@ function onTabClick(tab) {
     if (tab.props.name === 'comprehensive' && result.value?.code && !comprehensiveData.value) {
         nextTick(() => loadComprehensiveData())
     }
+    if (tab.props.name === 'contradiction' && result.value?.code && !contradictionData.value) {
+        nextTick(() => loadContradictionData())
+    }
     if (tab.props.name === 'fundamental' && result.value?.code && !fundData.value) {
         nextTick(() => loadFundamental(result.value.code))
+    }
+    if (tab.props.name === 'industry' && result.value?.code) {
+        nextTick(() => {
+            if (!fundData.value) {
+                startIndustryProgress()
+                industryLoading.value = true
+                loadFundamental(result.value.code).finally(() => {
+                    stopIndustryProgress()
+                    setTimeout(() => { industryLoading.value = false }, 300)
+                })
+            }
+        })
     }
 }
 

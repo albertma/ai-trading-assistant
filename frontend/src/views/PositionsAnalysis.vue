@@ -78,8 +78,16 @@
                                     <template #header><b style="color:#f56c6c;">🟢 盈利 TOP</b></template>
                                     <el-table :data="topWinners" size="small" stripe>
                                         <el-table-column label="#" type="index" width="40" />
-                                        <el-table-column prop="name" label="名称" width="90" />
-                                        <el-table-column prop="code" label="代码" width="80" />
+                                        <el-table-column label="名称" width="90">
+                                            <template #default="{ row }">
+                                                <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.name }}</router-link>
+                                            </template>
+                                        </el-table-column>
+                                        <el-table-column label="代码" width="80">
+                                            <template #default="{ row }">
+                                                <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.code }}</router-link>
+                                            </template>
+                                        </el-table-column>
                                         <el-table-column label="盈亏" width="100">
                                             <template #default="{ row }">
                                                 <el-tag type="danger" size="small" effect="dark">+{{ row.profit.toFixed(0) }}</el-tag>
@@ -93,8 +101,16 @@
                                     <template #header><b style="color:#67c23a;">🔴 亏损 TOP</b></template>
                                     <el-table :data="topLosers" size="small" stripe>
                                         <el-table-column label="#" type="index" width="40" />
-                                        <el-table-column prop="name" label="名称" width="90" />
-                                        <el-table-column prop="code" label="代码" width="80" />
+                                        <el-table-column label="名称" width="90">
+                                            <template #default="{ row }">
+                                                <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.name }}</router-link>
+                                            </template>
+                                        </el-table-column>
+                                        <el-table-column label="代码" width="80">
+                                            <template #default="{ row }">
+                                                <router-link :to="`/analysis?code=${row.code}`" style="color:#409eff;text-decoration:none;">{{ row.code }}</router-link>
+                                            </template>
+                                        </el-table-column>
                                         <el-table-column label="盈亏" width="100">
                                             <template #default="{ row }">
                                                 <el-tag type="success" size="small" effect="dark">{{ row.profit.toFixed(0) }}</el-tag>
