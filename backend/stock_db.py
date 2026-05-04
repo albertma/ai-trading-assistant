@@ -300,6 +300,21 @@ def save_draft_notes(code: str, notes: str) -> bool:
         conn.close()
 
 
+def get_draft_notes(code: str) -> str:
+    """获取某股票的最新草稿笔记"""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT notes FROM stock_archive WHERE code = ? ORDER BY analysis_date DESC LIMIT 1",
+            (code,)
+        ).fetchone()
+        return row[0] if row and row[0] else ''
+    except Exception:
+        return ''
+    finally:
+        conn.close()
+
+
 def get_snapshots(code: str) -> list:
     """获取某股票的所有快照（不含草稿）"""
     conn = get_db()

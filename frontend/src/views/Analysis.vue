@@ -995,6 +995,14 @@
                             </div>
                         </template>
                         <el-input v-model="draftNotes" type="textarea" :rows="5" placeholder="记录你对这只股票的分析、判断、交易计划…这些笔记在创建快照时会一起保存" />
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+                            <el-tag v-for="t in refTags" :key="t.key" size="small" :type="t.available ? 'primary' : 'info'" effect="plain"
+                                :style="{ cursor: t.available ? 'pointer' : 'not-allowed', opacity: t.available ? 1 : 0.5 }"
+                                @click="t.available && insertAnalysisRef(t.key)">
+                                {{ t.label }}
+                            </el-tag>
+                            <span style="font-size:11px;color:#909399;line-height:24px;margin-left:4px;">点击插入分析摘要</span>
+                        </div>
                     </el-card>
 
                     <!-- ===== 📸 快照历史（可删除） ===== -->
@@ -1030,7 +1038,7 @@
                                                 价 {{ s.price }} · MA5 {{ s.ma5 }} · MA20 {{ s.ma20 }} · MA60 {{ s.ma60 }} · RSI {{ s.rsi14 }}
                                                 <span v-if="s.revenue" style="margin-left:8px;">营收 {{ s.revenue }} · 净利 {{ s.net_profit }}</span>
                                             </div>
-                                            <div v-if="s.snapshot_notes" style="margin-top:6px;padding:6px 10px;background:rgba(64,158,255,0.06);border-radius:4px;font-size:12px;color:#b0b0b0;white-space:pre-wrap;">{{ s.snapshot_notes }}</div>
+                                            <div v-if="s.snapshot_notes" style="margin-top:6px;padding:6px 10px;background:rgba(64,158,255,0.06);border-radius:4px;font-size:12px;color:#b0b0b0;white-space:pre-wrap;" v-html="s.snapshot_notes"></div>
                                         </div>
                                         <el-button size="small" type="danger" text @click="deleteSnapshotHandler(s.snapshot_id)">🗑️</el-button>
                                     </div>
@@ -1150,7 +1158,13 @@
                 <div class="chat-header">
                     <b>🤖 AI 投研助手</b>
                     <span style="font-size:11px;color:#909399;">{{ result.name }} ({{ result.code }})</span>
-                    <el-button size="small" link @click="chatOpen = false" style="margin-left:auto;color:#909399;">✕</el-button>
+                    <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+                        <el-button size="small" plain @click="generateChatSummary" :loading="chatSummarizing" style="font-size:11px;padding:3px 8px;">
+                            {{ chatSummarizing ? '整理中...' : 'AI分析总结' }}
+                        </el-button>
+                        <el-button v-if="chatMessages.length" size="small" plain type="danger" @click="clearChatHistoryLocal" style="font-size:11px;padding:3px 8px;">清空历史</el-button>
+                        <el-button size="small" link @click="chatOpen = false" style="color:#909399;">✕</el-button>
+                    </div>
                 </div>
                 <div class="chat-messages" ref="chatRef">
                     <div v-if="!chatMessages.length" class="chat-welcome">
@@ -1276,7 +1290,7 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick, watch, onBeforeUnmount, inject } from 'vue'
-import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary, getExpenseAnalysis, getFinancialStatements, getComprehensiveAnalysis, getContradiction, saveSnapshot, deleteSnapshot, updateDraftNotes, listSnapshots } from '../api/index.js'
+import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, clearChatHistory, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary, getExpenseAnalysis, getFinancialStatements, getComprehensiveAnalysis, getContradiction, saveSnapshot, deleteSnapshot, updateDraftNotes, listSnapshots } from '../api/index.js'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import * as echarts from 'echarts'
@@ -1512,6 +1526,49 @@ function calcMACD(close) {
     // MACD柱 = (DIF - DEA) * 2
     const macd = dif.map((d, i) => +((d - dea[i]) * 2).toFixed(4))
     return { dif, dea, macd }
+}
+
+const refTags = computed(() => [
+    { key: 'tech', label: '#技术面', available: !!result.value?.technical },
+    { key: 'kline', label: '#K线形态', available: !!(result.value?.technical?.kline_patterns?.length) },
+    { key: 'fundamental', label: '#基本面', available: !!fundData.value?.financial_summary?.records?.length },
+    { key: 'comprehensive', label: '#综合评估', available: !!comprehensiveData.value },
+    { key: 'contradiction', label: '#矛盾分析', available: !!contradictionData.value?.contradictions?.length },
+    { key: 'dupont', label: '#杜邦分析', available: !!dupontData.value?.dupont?.rows?.length },
+    { key: 'industry', label: '#行业前瞻', available: !!cycleAnalysis.value },
+])
+
+function insertAnalysisRef(tag) {
+    const t = result.value?.technical
+    const tech = t ? `技术面：现价${t.current_price}，涨幅${t.change_pct}%，MA5=${t.ma5} MA10=${t.ma10} MA20=${t.ma20} MA60=${t.ma60} MA200=${t.ma200}，RSI=${t.rsi_14}，均线${t.bullish_alignment ? '多头' : '空头'}` : ''
+    const patterns = t?.kline_patterns?.length ? `K线形态：${t.kline_patterns.map(p => `${p.pattern}(${p.direction === 'bullish' ? '看涨' : '看跌'})`).join('、')}` : ''
+    // K线截图（如果有图表实例）
+    let klineImg = ''
+    if (tag === 'kline' && klineChartInstance) {
+        try {
+            const dataUrl = klineChartInstance.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#1a1a2e' })
+            klineImg = `<img src="${dataUrl}" style="max-width:100%;border-radius:6px;margin-top:6px;" alt="K线图" />`
+        } catch (e) { console.error('K线截图失败', e) }
+    }
+    const fund = fundData.value?.financial_summary?.records
+    const fin = fund?.length ? `基本面(最新)：营收${fund[0]['营业总收入'] ?? '--'}亿，净利${fund[0]['净利润'] ?? '--'}亿，毛利率${fund[0]['销售毛利率'] ?? '--'}%，ROE${fund[0]['净资产收益率'] ?? '--'}%` : ''
+    const comp = comprehensiveData.value ? `综合评估：${comprehensiveData.value.total_score}/${comprehensiveData.value.total_max}分(${comprehensiveData.value.total_pct}%)，${comprehensiveData.value.overall || ''}` : ''
+    const contra = contradictionData.value?.contradictions?.length
+        ? `矛盾分析(总分${contradictionData.value.total_score}/${contradictionData.value.total_max})：核心矛盾「${contradictionData.value.primary?.name}」评分${contradictionData.value.primary?.pct}%、「${contradictionData.value.secondary?.name}」评分${contradictionData.value.secondary?.pct}%`
+        : ''
+    const dupont = dupontData.value?.dupont?.rows?.length
+        ? `杜邦分析(最新ROE=${dupontData.value.dupont.rows[0]?.roe_pct}%)：净利率${dupontData.value.dupont.rows[0]?.net_margin_pct}%，周转率${dupontData.value.dupont.rows[0]?.asset_turnover}，权益乘数${dupontData.value.dupont.rows[0]?.equity_multiplier}`
+        : ''
+    const ind = cycleAnalysis.value ? `行业前瞻：${cycleAnalysis.value.cycle_stage}(评分${cycleAnalysis.value.cycle_score})，供需矛盾评分${cycleAnalysis.value.supply_score}，量化预测${cycleAnalysis.value.outlook_label}(${cycleAnalysis.value.outlook_score}分)` : ''
+
+    const map = { tech, kline: patterns, fundamental: fin, comprehensive: comp, contradiction: contra, dupont, industry: ind }
+    let text = map[tag]
+    if (tag === 'kline' && klineImg) {
+        text = (text ? text + '\n' : '') + klineImg
+    }
+    if (!text) return
+    const prefix = draftNotes.value ? '\n\n' : ''
+    draftNotes.value += prefix + text
 }
 
 async function loadKlineChart() {
@@ -1908,10 +1965,8 @@ async function loadArchive(code) {
     try {
         const { data } = await getStockProfile(code)
         archiveData.value = data
-        // 从notes中提取最新一条作为草稿
-        if (data?.notes?.length) {
-            draftNotes.value = data.notes[data.notes.length - 1].note || ''
-        }
+        // 从stock_archive加载草稿笔记
+        draftNotes.value = data?.draft_notes || ''
     } catch {} finally { archiveLoading.value = false }
     loadAiAnalyses()
     loadSnapshots()
@@ -1974,6 +2029,8 @@ async function createSnapshotHandler() {
             notes: draftNotes.value.trim(),
         })
         ElMessage.success('📸 快照已创建')
+        draftNotes.value = ''
+        try { await updateDraftNotes(code, '') } catch {}
         await loadSnapshots()
     } catch (e) {
         ElMessage.error('创建失败: ' + (e.response?.data?.detail || e.message))
@@ -2120,6 +2177,46 @@ function scrollChat() {
         const el = chatRef.value
         if (el) el.scrollTop = el.scrollHeight
     })
+}
+
+// ===== AI分析总结（聊天面板内） =====
+const chatSummarizing = ref(false)
+
+async function generateChatSummary() {
+    const code = result.value?.code
+    if (!code) return
+    if (!chatMessages.value.length) {
+        ElMessage.info('暂无对话记录，先聊几句吧')
+        return
+    }
+    chatSummarizing.value = true
+    try {
+        const { data } = await summarizeChat(code)
+        if (data.summary && data.summary !== '暂无AI对话可供分析') {
+            ElMessage.success('AI分析已生成，查看档案 → 📋 AI分析')
+        } else {
+            ElMessage.info(data.summary || '暂无对话记录可分析')
+        }
+        // 刷新档案Tab的AI分析列表
+        await loadAiAnalyses()
+    } catch {
+        ElMessage.error('生成分析总结失败')
+    } finally {
+        chatSummarizing.value = false
+    }
+}
+
+// ===== 清空聊天历史 =====
+async function clearChatHistoryLocal() {
+    const code = result.value?.code
+    if (!code) return
+    try {
+        await clearChatHistory(code)
+        chatMessages.value = []
+        ElMessage.success('对话历史已清空')
+    } catch {
+        ElMessage.error('清空失败')
+    }
 }
 </script>
 

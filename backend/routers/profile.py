@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from datetime import date, timedelta
 
 from backend.config import MARKET_DATA_DIR
-from backend.stock_db import save_analysis, get_history, get_all_history, get_stock_history, add_note, get_notes, get_chat_history, get_financial_reports, save_financial_reports, save_snapshot, delete_snapshot, delete_draft, get_snapshots, save_draft_notes
+from backend.stock_db import save_analysis, get_history, get_all_history, get_stock_history, add_note, get_notes, get_chat_history, get_financial_reports, save_financial_reports, save_snapshot, delete_snapshot, delete_draft, get_snapshots, save_draft_notes, get_draft_notes
 from backend.routers.analysis import analyze_stock as _do_analysis
 from backend.routers.fundamental import fundamental_analysis as _do_fundamental
 
@@ -119,6 +119,7 @@ def stock_profile(code: str):
     profile["notes"] = get_notes(code)
     profile["analysis_history"] = get_stock_history(code)
     profile["chat_history"] = get_chat_history(code, 30)
+    profile["draft_notes"] = get_draft_notes(code)
 
     # 后台存DB
     try:
