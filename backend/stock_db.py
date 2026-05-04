@@ -57,6 +57,7 @@ def init_db():
             sector TEXT,
             analysis_date TEXT NOT NULL,
             created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            snapshot_notes TEXT DEFAULT '',
             price REAL, change_pct REAL,
             ma5 REAL, ma10 REAL, ma20 REAL, ma60 REAL, ma200 REAL,
             rsi14 REAL,
@@ -157,6 +158,12 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_rr_enabled ON risk_rules(enabled);
     """)
     conn.commit()
+    # 迁移：已有数据库加 snapshot_notes 列
+    try:
+        conn.execute("ALTER TABLE analysis_snapshots ADD COLUMN snapshot_notes TEXT DEFAULT ''")
+        conn.commit()
+    except Exception:
+        pass
     conn.close()
 
 def save_analysis(code: str, name: str, sector: str, data: dict) -> bool:
@@ -244,7 +251,7 @@ def get_stock_history(code: str) -> list:
     return result
 
 
-def save_snapshot(code: str, name: str, sector: str, data: dict) -> int | None:
+def save_snapshot(code: str, name: str, sector: str, data: dict, notes: str = '') -> int | None:
     """保存分析快照（手动保存），返回快照ID"""
     from datetime import date
     tech = data.get("technical") or {}
@@ -253,14 +260,14 @@ def save_snapshot(code: str, name: str, sector: str, data: dict) -> int | None:
     conn = get_db()
     try:
         cur = conn.execute("""INSERT INTO analysis_snapshots (
-            code, name, sector, analysis_date,
+            code, name, sector, analysis_date, snapshot_notes,
             price, change_pct,
             ma5, ma10, ma20, ma60, ma200,
             rsi14, macd_dif, macd_dea, macd_hist,
             bullish_alignment, risk_passed,
             revenue, net_profit, gross_margin, roe
-        ) VALUES (?,?,?,?, ?,?, ?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?,?)""", (
-            code, name, sector, date.today().isoformat(),
+        ) VALUES (?,?,?,?,?, ?,?, ?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?,?)""", (
+            code, name, sector, date.today().isoformat(), notes,
             tech.get("current_price"), tech.get("change_pct"),
             tech.get("ma5"), tech.get("ma10"), tech.get("ma20"), tech.get("ma60"), tech.get("ma200"),
             tech.get("rsi_14"),
@@ -275,6 +282,39 @@ def save_snapshot(code: str, name: str, sector: str, data: dict) -> int | None:
         return None
     finally:
         conn.close()
+
+
+def save_draft_notes(code: str, notes: str) -> bool:
+    """保存草稿笔记到最新的stock_archive记录"""
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "UPDATE stock_archive SET notes = ? WHERE code = ? AND analysis_date = (SELECT MAX(analysis_date) FROM stock_archive WHERE code = ?)",
+            (notes, code, code)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def get_snapshots(code: str) -> list:
+    """获取某股票的所有快照（不含草稿）"""
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT id as snapshot_id, code, name, sector, analysis_date, created_at, snapshot_notes,
+                  price, change_pct, ma5, ma10, ma20, ma60, ma200, rsi14,
+                  macd_dif, macd_dea, macd_hist,
+                  bullish_alignment, risk_passed,
+                  revenue, net_profit, gross_margin, roe
+           FROM analysis_snapshots WHERE code = ?
+           ORDER BY created_at DESC""",
+        (code,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def delete_snapshot(snapshot_id: int) -> bool:

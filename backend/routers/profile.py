@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from datetime import date, timedelta
 
 from backend.config import MARKET_DATA_DIR
-from backend.stock_db import save_analysis, get_history, get_all_history, get_stock_history, add_note, get_notes, get_chat_history, get_financial_reports, save_financial_reports, save_snapshot, delete_snapshot, delete_draft
+from backend.stock_db import save_analysis, get_history, get_all_history, get_stock_history, add_note, get_notes, get_chat_history, get_financial_reports, save_financial_reports, save_snapshot, delete_snapshot, delete_draft, get_snapshots, save_draft_notes
 from backend.routers.analysis import analyze_stock as _do_analysis
 from backend.routers.fundamental import fundamental_analysis as _do_fundamental
 
@@ -175,10 +175,28 @@ def save_analysis_snapshot(code: str, data: dict):
         (data or {}).get("name", ""),
         (data or {}).get("sector", ""),
         (data or {}).get("analysis_data", {}),
+        (data or {}).get("notes", ""),
     )
     if snapshot_id is None:
         raise HTTPException(500, "保存快照失败")
     return {"status": "ok", "snapshot_id": snapshot_id}
+
+
+@router.put("/{code}/draft-notes")
+def update_draft_notes(code: str, data: dict):
+    """保存草稿笔记"""
+    notes = (data or {}).get("notes", "").strip()
+    ok = save_draft_notes(code, notes)
+    if not ok:
+        raise HTTPException(404, "该股票暂无分析记录，请先打开档案")
+    return {"status": "ok"}
+
+
+@router.get("/{code}/snapshots")
+def list_snapshots(code: str):
+    """获取所有快照（不含草稿）"""
+    records = get_snapshots(code)
+    return {"code": code, "records": records}
 
 
 @router.delete("/{code}/snapshot/{snapshot_id}")

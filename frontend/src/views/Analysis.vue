@@ -928,15 +928,19 @@
             </el-tab-pane>
 
             <!-- Tab 4: 档案 -->
+            <!-- Tab 4: 档案 — 草稿笔记 + 快照历史 -->
             <el-tab-pane label="📁 档案" name="archive">
                 <div v-if="archiveLoading" style="text-align:center;padding:40px;"><el-icon class="is-loading" :size="32"><Loading /></el-icon></div>
                 <template v-else-if="archiveData">
+                    <!-- 技术指标封面 -->
                     <el-card shadow="hover" style="margin-bottom:16px;">
                         <template #header>
                             <div style="display:flex;justify-content:space-between;align-items:center;">
                                 <b>📋 {{ archiveData.code }} {{ archiveData.name }}</b>
-                                <el-tag v-if="archiveData.risk_passed === true" type="success">✅ 风控通过</el-tag>
-                                <el-tag v-else-if="archiveData.risk_passed === false" type="danger">❌ 禁止买入</el-tag>
+                                <div style="display:flex;gap:6px;">
+                                    <el-tag v-if="archiveData.risk_passed === true" type="success">✅ 风控通过</el-tag>
+                                    <el-tag v-else-if="archiveData.risk_passed === false" type="danger">❌ 禁止买入</el-tag>
+                                </div>
                             </div>
                         </template>
                         <el-descriptions :column="4" border size="small">
@@ -958,10 +962,14 @@
                             <el-descriptions-item label="负债率">{{ archiveData.debt_ratio ? archiveData.debt_ratio+'%' : '--' }}</el-descriptions-item>
                         </el-descriptions>
                     </el-card>
+
+                    <!-- 主营业务 -->
                     <el-card v-if="archiveData.business" shadow="hover" style="margin-bottom:16px;">
                         <template #header><b>🏭 主营业务</b></template>
                         <p style="font-size:13px;line-height:1.6;color:#303133;">{{ archiveData.business }}</p>
                     </el-card>
+
+                    <!-- 行业排名 -->
                     <el-card v-if="archiveData.industry_rank" shadow="hover" style="margin-bottom:16px;">
                         <template #header><b>🔭 行业排名</b></template>
                         <el-descriptions :column="3" border size="small">
@@ -970,49 +978,71 @@
                             <el-descriptions-item label="龙头股">{{ (archiveData.top_stocks||[]).map(s=>s.name).join('、') || '--' }}</el-descriptions-item>
                         </el-descriptions>
                     </el-card>
-                    <el-card v-if="archiveData.analysis_history?.length" shadow="hover" style="margin-bottom:16px;">
-                        <template #header><b>📅 分析历史（{{ archiveData.analysis_history.length }}次）</b></template>
-                        <el-table :data="archiveData.analysis_history" border size="small" style="width:100%">
-                            <el-table-column prop="analysis_date" label="日期" width="100" />
-                            <el-table-column prop="price" label="当时价" width="70" />
-                            <el-table-column prop="change_pct" label="涨幅" width="70">
-                                <template #default="{ row }">
-                                    <span :style="{ color: (row?.change_pct||0) >= 0 ? '#f56c6c' : '#67c23a' }">{{ row?.change_pct ?? 0 }}%</span>
-                                </template>
-                            </el-table-column>
-                            <el-table-column prop="ma5" label="MA5" width="65" />
-                            <el-table-column prop="ma20" label="MA20" width="65" />
-                            <el-table-column prop="rsi14" label="RSI" width="55" />
-                            <el-table-column prop="revenue" label="营收" width="65" />
-                            <el-table-column prop="net_profit" label="净利" width="65" />
-                            <el-table-column label="风控" width="65">
-                                <template #default="{ row }">
-<el-tag :type="row?.risk_passed ? 'success' : 'danger'" size="small">{{ row?.risk_passed ? '通过' : '禁止' }}</el-tag>
-                                </template>
-                            </el-table-column>
-                            <el-table-column label="均线" width="55">
-                                <template #default="{ row }">
-                                    <el-tag v-if="row?.bullish_alignment" type="success" size="small">多头</el-tag>
-                                    <el-tag v-else type="info" size="small">空头</el-tag>
-                                </template>
-                            </el-table-column>
-                        </el-table>
-                    </el-card>
-                    <el-card shadow="hover">
+
+                    <!-- ===== 📝 草稿笔记（可编辑） ===== -->
+                    <el-card shadow="hover" style="margin-bottom:16px;border:1px solid #334;">
                         <template #header>
                             <div style="display:flex;justify-content:space-between;align-items:center;">
-                                <b>📝 备注</b>
-                                <el-button size="small" type="primary" @click="showNoteDialog = true">添加备注</el-button>
+                                <b>📝 分析笔记（草稿）</b>
+                                <div style="display:flex;gap:6px;">
+                                    <el-button size="small" type="primary" plain @click="saveDraftHandler" :loading="draftSaving" :disabled="!draftNotes.trim()">
+                                        💾 保存草稿
+                                    </el-button>
+                                    <el-button size="small" type="success" @click="createSnapshotHandler" :loading="snapshotCreating">
+                                        📸 创建快照
+                                    </el-button>
+                                </div>
                             </div>
                         </template>
-                        <div v-if="!archiveData.notes?.length" style="color:#909399;text-align:center;padding:12px;">暂无备注</div>
-                        <div v-for="(n, i) in archiveData.notes" :key="i" class="note-item">
-                            <div class="note-text">{{ n.note }}</div>
-                            <div class="note-time">{{ n.created_at }}</div>
+                        <el-input v-model="draftNotes" type="textarea" :rows="5" placeholder="记录你对这只股票的分析、判断、交易计划…这些笔记在创建快照时会一起保存" />
+                    </el-card>
+
+                    <!-- ===== 📸 快照历史（可删除） ===== -->
+                    <el-card shadow="hover" style="margin-bottom:16px;">
+                        <template #header>
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <b>📸 快照历史（{{ (snapshotRecords || []).length }}个）</b>
+                                <el-button v-if="snapshotRecords?.length" size="small" text @click="loadSnapshots" :loading="snapshotLoading">刷新</el-button>
+                            </div>
+                        </template>
+                        <div v-if="!snapshotRecords?.length && !snapshotLoading" style="text-align:center;padding:16px;color:#909399;font-size:13px;">
+                            暂无快照 — 写出分析笔记后点击「创建快照」定格当前状态
+                        </div>
+                        <el-timeline v-else-if="snapshotRecords?.length">
+                            <el-timeline-item v-for="s in snapshotRecords" :key="s.snapshot_id"
+                                :timestamp="(s.created_at || '').slice(0,16).replace('T',' ') + ' · 创建时的笔记本'" placement="top">
+                                <el-card shadow="never" style="background:rgba(255,255,255,0.03);">
+                                    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                                        <div style="flex:1;">
+                                            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+                                                <el-tag size="small" type="info">#{{ s.snapshot_id }}</el-tag>
+                                                <el-tag size="small" :type="(s.change_pct||0) >= 0 ? 'danger' : 'success'">
+                                                    {{ s.change_pct >= 0 ? '+' : '' }}{{ s.change_pct }}%
+                                                </el-tag>
+                                                <el-tag size="small" :type="s.risk_passed ? 'success' : 'danger'">
+                                                    {{ s.risk_passed ? '风控通过' : '禁止买入' }}
+                                                </el-tag>
+                                                <el-tag size="small" :type="s.bullish_alignment ? 'success' : 'info'">
+                                                    {{ s.bullish_alignment ? '均线多头' : '均线空头' }}
+                                                </el-tag>
+                                            </div>
+                                            <div style="font-size:12px;color:#b0b0b0;">
+                                                价 {{ s.price }} · MA5 {{ s.ma5 }} · MA20 {{ s.ma20 }} · MA60 {{ s.ma60 }} · RSI {{ s.rsi14 }}
+                                                <span v-if="s.revenue" style="margin-left:8px;">营收 {{ s.revenue }} · 净利 {{ s.net_profit }}</span>
+                                            </div>
+                                            <div v-if="s.snapshot_notes" style="margin-top:6px;padding:6px 10px;background:rgba(64,158,255,0.06);border-radius:4px;font-size:12px;color:#b0b0b0;white-space:pre-wrap;">{{ s.snapshot_notes }}</div>
+                                        </div>
+                                        <el-button size="small" type="danger" text @click="deleteSnapshotHandler(s.snapshot_id)">🗑️</el-button>
+                                    </div>
+                                </el-card>
+                            </el-timeline-item>
+                        </el-timeline>
+                        <div v-else-if="snapshotLoading" style="text-align:center;padding:16px;">
+                            <el-icon class="is-loading" :size="20"><Loading /></el-icon>
                         </div>
                     </el-card>
 
-                    <!-- 财报记录 -->
+                    <!-- 财务报表 -->
                     <el-card v-if="archiveData.financial_records?.length" shadow="hover" style="margin-top:16px;">
                         <template #header>
                             <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -1059,7 +1089,7 @@
                         </el-table>
                     </el-card>
 
-                    <!-- AI 分析（由AI整理对话记录生成） -->
+                    <!-- AI 分析 -->
                     <el-card shadow="hover" style="margin-top:16px;">
                         <template #header>
                             <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -1072,8 +1102,6 @@
                                 </div>
                             </div>
                         </template>
-
-                        <!-- 已有分析记录 -->
                         <div v-if="aiAnalyses.length">
                             <div v-for="(item, i) in aiAnalyses" :key="i" class="ai-analysis-item">
                                 <div class="ai-analysis-header">
@@ -1084,8 +1112,6 @@
                                 <div class="ai-analysis-body" v-html="renderMarkdown(item.summary)"></div>
                             </div>
                         </div>
-
-                        <!-- 空状态 + 引导 -->
                         <div v-else-if="!aiAnalyzing" style="text-align:center;padding:24px;color:#909399;font-size:13px;">
                             <p>先跟 AI 助手聊这只股票，然后点击「生成AI分析」</p>
                             <p style="margin-top:6px;">AI 会把对话内容整理成技术面、基本面、风险提示等要点</p>
@@ -1250,7 +1276,7 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick, watch, onBeforeUnmount, inject } from 'vue'
-import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary, getExpenseAnalysis, getFinancialStatements, getComprehensiveAnalysis, getContradiction } from '../api/index.js'
+import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary, getExpenseAnalysis, getFinancialStatements, getComprehensiveAnalysis, getContradiction, saveSnapshot, deleteSnapshot, updateDraftNotes, listSnapshots } from '../api/index.js'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import * as echarts from 'echarts'
@@ -1432,6 +1458,11 @@ const dupontLoading = ref(false)
 const dupontCommentary = ref([])
 const archiveData = ref(null)
 const archiveLoading = ref(false)
+const draftNotes = ref('')
+const draftSaving = ref(false)
+const snapshotCreating = ref(false)
+const snapshotLoading = ref(false)
+const snapshotRecords = ref([])
 const showNoteDialog = ref(false)
 const newNote = ref('')
 const inWatchlist = ref(false)
@@ -1526,8 +1557,9 @@ async function loadKlineChart() {
             backgroundColor: '#1a1a2e',
             animation: false,
             grid: [
-                { left: '6%', right: '3%', top: '4%', height: '58%' },
-                { left: '6%', right: '3%', top: '72%', height: '18%' },
+                { left: '6%', right: '3%', top: '4%', height: '50%' },
+                { left: '6%', right: '3%', top: '62%', height: '13%' },
+                { left: '6%', right: '3%', top: '78%', height: '16%' },
             ],
             xAxis: [
                 { type: 'category', data: dates, gridIndex: 0,
@@ -1538,18 +1570,25 @@ async function loadKlineChart() {
                     axisLabel: { show: false },
                     axisLine: { lineStyle: { color: '#334' } },
                     splitLine: { show: false } },
+                { type: 'category', data: dates, gridIndex: 2,
+                    axisLabel: { show: false },
+                    axisLine: { lineStyle: { color: '#334' } },
+                    splitLine: { show: false } },
             ],
             yAxis: [
                 { type: 'value', gridIndex: 0, scale: true,
                     axisLabel: { color: '#909399', fontSize: 10 },
                     splitLine: { lineStyle: { color: '#2a2a3e' } } },
                 { type: 'value', gridIndex: 1, scale: true,
-                    axisLabel: { color: '#909399', fontSize: 10 },
+                    axisLabel: { color: '#909399', fontSize: 9 },
+                    splitLine: { show: false } },
+                { type: 'value', gridIndex: 2, scale: true,
+                    axisLabel: { color: '#909399', fontSize: 9 },
                     splitLine: { lineStyle: { color: '#2a2a3e' } } },
             ],
             dataZoom: [
-                { type: 'inside', xAxisIndex: [0, 1], start: 40, end: 100 },
-                { type: 'slider', xAxisIndex: [0, 1], start: 40, end: 100,
+                { type: 'inside', xAxisIndex: [0, 1, 2], start: 40, end: 100 },
+                { type: 'slider', xAxisIndex: [0, 1, 2], start: 40, end: 100,
                     height: 16, bottom: 2,
                     borderColor: '#334', backgroundColor: '#1a1a2e',
                     fillerColor: 'rgba(64,158,255,0.2)',
@@ -1572,6 +1611,14 @@ async function loadKlineChart() {
                         borderColor: '#f56c6c', borderColor0: '#67c23a',
                     },
                 },
+                // 成交量柱
+                {
+                    name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1,
+                    data: recs.map(r => ({
+                        value: r.volume,
+                        itemStyle: { color: r.close >= r.open ? '#f56c6c' : '#67c23a' },
+                    })),
+                },
                 // MA5
                 { name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
                     data: ma5, smooth: true, symbol: 'none',
@@ -1590,20 +1637,20 @@ async function loadKlineChart() {
                     lineStyle: { width: 1, color: '#ff85c0' } },
                 // MACD柱状图
                 {
-                    name: 'MACD', type: 'bar', xAxisIndex: 1, yAxisIndex: 1,
+                    name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2,
                     data: macdBarData,
                 },
                 // DIF线
-                { name: 'DIF', type: 'line', xAxisIndex: 1, yAxisIndex: 1,
+                { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
                     data: dif, smooth: true, symbol: 'none',
                     lineStyle: { width: 1, color: '#fff' } },
                 // DEA线
-                { name: 'DEA', type: 'line', xAxisIndex: 1, yAxisIndex: 1,
+                { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
                     data: dea, smooth: true, symbol: 'none',
                     lineStyle: { width: 1, color: '#ffd666' } },
             ],
             legend: {
-                data: ['MA5', 'MA10', 'MA20', 'MA60', 'DIF', 'DEA'],
+                data: ['MA5', 'MA10', 'MA20', 'MA60', '成交量', 'DIF', 'DEA'],
                 top: 0, right: 10, textStyle: { color: '#ccc', fontSize: 11 },
                 icon: 'roundRect',
             },
@@ -1861,8 +1908,88 @@ async function loadArchive(code) {
     try {
         const { data } = await getStockProfile(code)
         archiveData.value = data
+        // 从notes中提取最新一条作为草稿
+        if (data?.notes?.length) {
+            draftNotes.value = data.notes[data.notes.length - 1].note || ''
+        }
     } catch {} finally { archiveLoading.value = false }
     loadAiAnalyses()
+    loadSnapshots()
+}
+
+async function loadSnapshots() {
+    const code = result.value?.code
+    if (!code) return
+    snapshotLoading.value = true
+    try {
+        const { data } = await listSnapshots(code)
+        snapshotRecords.value = data.records || []
+    } catch {} finally { snapshotLoading.value = false }
+}
+
+async function saveDraftHandler() {
+    const code = result.value?.code
+    if (!code || !draftNotes.value.trim()) return
+    draftSaving.value = true
+    try {
+        await updateDraftNotes(code, draftNotes.value.trim())
+        ElMessage.success('草稿已保存')
+    } catch (e) {
+        ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message))
+    } finally { draftSaving.value = false }
+}
+
+async function createSnapshotHandler() {
+    const code = result.value?.code
+    if (!code) return
+    // 先保存草稿
+    if (draftNotes.value.trim()) {
+        try { await updateDraftNotes(code, draftNotes.value.trim()) } catch {}
+    }
+    snapshotCreating.value = true
+    try {
+        // 获取当前分析数据
+        const { data: profile } = await getStockProfile(code)
+        await saveSnapshot(code, {
+            name: profile.name || '',
+            sector: profile.sector || '',
+            analysis_data: {
+                technical: {
+                    current_price: profile.price,
+                    change_pct: profile.change_pct,
+                    ma5: profile.ma5, ma10: profile.ma10, ma20: profile.ma20,
+                    ma60: profile.ma60, ma200: profile.ma200,
+                    rsi_14: profile.rsi14,
+                    macd: profile.macd,
+                    bullish_alignment: profile.bullish_alignment,
+                },
+                fundamental: {
+                    revenue: profile.revenue,
+                    net_profit: profile.net_profit,
+                    gross_margin: profile.gross_margin,
+                    roe: profile.roe,
+                },
+                risk_check: { passed: profile.risk_passed },
+            },
+            notes: draftNotes.value.trim(),
+        })
+        ElMessage.success('📸 快照已创建')
+        await loadSnapshots()
+    } catch (e) {
+        ElMessage.error('创建失败: ' + (e.response?.data?.detail || e.message))
+    } finally { snapshotCreating.value = false }
+}
+
+async function deleteSnapshotHandler(id) {
+    const code = result.value?.code
+    if (!code) return
+    try {
+        await deleteSnapshot(code, id)
+        ElMessage.success('快照已删除')
+        snapshotRecords.value = snapshotRecords.value.filter(s => s.snapshot_id !== id)
+    } catch (e) {
+        ElMessage.error('删除失败: ' + (e.response?.data?.detail || e.message))
+    }
 }
 
 async function saveNote() {

@@ -89,6 +89,14 @@ export function saveSnapshot(code, data) {
     return api.post(`/profile/${code}/save-snapshot`, data)
 }
 
+export function updateDraftNotes(code, notes) {
+    return api.put(`/profile/${code}/draft-notes`, { notes })
+}
+
+export function listSnapshots(code) {
+    return api.get(`/profile/${code}/snapshots`)
+}
+
 export function deleteSnapshot(code, snapshotId) {
     return api.delete(`/profile/${code}/snapshot/${snapshotId}`)
 }
