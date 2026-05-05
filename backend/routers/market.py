@@ -194,7 +194,7 @@ def market_overview(
             "name": r.get("name", ""),
             "close": r.get("close"),
             "change_pct": r.get("change_pct"),
-            "amount": r.get("amount"),
+            "amount": round(r.get("amount", 0) / 1e8, 2) if r.get("amount") else None,
         })
 
     # 涨跌幅TOP5
