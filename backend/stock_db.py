@@ -121,6 +121,11 @@ def init_db():
             updated_at TEXT DEFAULT (datetime('now','localtime')),
             PRIMARY KEY (code, period)
         );
+        CREATE TABLE IF NOT EXISTS financial_cache (
+            code TEXT PRIMARY KEY,
+            data TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         CREATE TABLE IF NOT EXISTS stock_info (
             code TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -651,6 +656,37 @@ def get_latest_financial_report(code: str) -> dict | None:
     return reports[0] if reports else None
 
 
+def get_financial_cache(code: str) -> dict | None:
+    """读取财务数据缓存（JSON blob）"""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT data FROM financial_cache WHERE code = ?",
+        (code,)
+    ).fetchone()
+    conn.close()
+    if row:
+        import json
+        return json.loads(row["data"])
+    return None
+
+
+def save_financial_cache(code: str, data: dict) -> bool:
+    """保存财务数据缓存（JSON blob）"""
+    import json
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO financial_cache (code, data, created_at) VALUES (?, ?, datetime('now','localtime'))",
+            (code, json.dumps(data, ensure_ascii=False))
+        )
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
 # ===== 股票信息（代码/名称/拼音） =====
 
 def refresh_stock_info_from_csv() -> int:
@@ -669,7 +705,7 @@ def refresh_stock_info_from_csv() -> int:
         if not code or not name:
             continue
         try:
-            add_to_stock_info(code, name, industry=str(r.get("行业", "")),
+            add_to_stock_info(code, name, industry=str(r.get("所属行业", "")),
                             market_cap=r.get("总市值"), concepts=[])
             count += 1
         except Exception:

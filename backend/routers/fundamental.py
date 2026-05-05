@@ -8,6 +8,10 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from backend.config import MARKET_DATA_DIR
+import sqlite3
+import os
+
+DB_PATH = os.path.expanduser("~/Jarvis/ai_trading/stock_archive.db")
 
 router = APIRouter()
 
@@ -70,20 +74,31 @@ def _get_revenue_breakdown(code: str) -> list | None:
 # ============================================================
 # 3. 行业数据（从本地CSV获取板块表现）
 # ============================================================
+def _find_latest_csv(max_lookback: int = 30) -> str | None:
+    """找最新的可用CSV，往回搜max_lookback天（默认30天）"""
+    today = date.today()
+    for i in range(max_lookback):
+        d = (today - timedelta(days=i)).isoformat()
+        path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
+        if path.exists():
+            return str(path)
+    return None
+
 def _get_industry_data(sector: str | None) -> dict | None:
     """获取行业板块数据：板块排名、平均涨幅、龙头股"""
     if not sector or sector == "--":
         return None
 
-    today = date.today()
-    for i in range(5):
-        d = (today - timedelta(days=i)).isoformat()
-        path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
-        if path.exists():
-            df = pd.read_csv(path, encoding="utf-16", sep="\t")
-            break
-    else:
+    csv_path = _find_latest_csv()
+    if csv_path is None:
         return None
+
+    df = pd.read_csv(csv_path, encoding="utf-16", sep="\t")
+
+    # 从文件名提取日期
+    import re
+    m = re.search(r'(\d{4}-\d{2}-\d{2})', csv_path)
+    csv_date = m.group(1) if m else str(date.today())
 
     # 该行业全部股票
     sector_df = df[df["所属行业"] == sector].copy()
@@ -122,7 +137,7 @@ def _get_industry_data(sector: str | None) -> dict | None:
 
     return {
         "sector": sector,
-        "date": str(today),
+        "date": csv_date,
         "rank": rank,
         "total_sectors": total,
         "avg_change": round(avg_chg, 2),
@@ -972,19 +987,32 @@ def fundamental_analysis(code: str):
     # 获取收入构成
     revenue = _get_revenue_breakdown(code)
 
-    # 从CSV获取行业
+    # 从SQLite获取行业（优先），CSV兜底
     sector = None
-    today = date.today()
-    for i in range(5):
-        d = (today - timedelta(days=i)).isoformat()
-        path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
-        if path.exists():
-            df = pd.read_csv(path, encoding="utf-16", sep="	", engine="python")
-            df["代码"] = df["代码"].astype(str).str.strip("'\"")
-            match = df[df["代码"] == code]
-            if not match.empty:
-                sector = match.iloc[0].get("所属行业", "")
-            break
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT industry FROM stock_info WHERE code=?", (code,))
+        row = c.fetchone()
+        conn.close()
+        if row and row[0]:
+            sector = row[0]
+    except Exception:
+        pass
+
+    if not sector or sector == "--":
+        # CSV兜底：找5天内
+        today = date.today()
+        for i in range(5):
+            d = (today - timedelta(days=i)).isoformat()
+            path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
+            if path.exists():
+                df = pd.read_csv(path, encoding="utf-16", sep="\t", engine="python")
+                df["代码"] = df["代码"].astype(str).str.strip("'\"")
+                match = df[df["代码"] == code]
+                if not match.empty:
+                    sector = match.iloc[0].get("所属行业", "")
+                break
 
     # 行业前瞻
     industry = _get_industry_data(sector)
@@ -1013,17 +1041,29 @@ def supply_chain_api(code: str):
 
     # 获取行业
     sector = None
-    today = date.today()
-    for i in range(5):
-        d = (today - timedelta(days=i)).isoformat()
-        path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
-        if path.exists():
-            df = pd.read_csv(path, encoding="utf-16", sep="\t", engine="python")
-            df["代码"] = df["代码"].astype(str).str.strip("'\"")
-            match = df[df["代码"] == code]
-            if not match.empty:
-                sector = match.iloc[0].get("所属行业", "")
-            break
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT industry FROM stock_info WHERE code=?", (code,))
+        row = c.fetchone()
+        conn.close()
+        if row and row[0]:
+            sector = row[0]
+    except Exception:
+        pass
+
+    if not sector or sector == "--":
+        today = date.today()
+        for i in range(5):
+            d = (today - timedelta(days=i)).isoformat()
+            path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
+            if path.exists():
+                df = pd.read_csv(path, encoding="utf-16", sep="\t", engine="python")
+                df["代码"] = df["代码"].astype(str).str.strip("'\"")
+                match = df[df["代码"] == code]
+                if not match.empty:
+                    sector = match.iloc[0].get("所属行业", "")
+                break
 
     supply = _get_supply_chain(sector)
     return {

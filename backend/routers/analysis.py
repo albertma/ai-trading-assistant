@@ -12,21 +12,17 @@ from pathlib import Path
 
 from backend.config import MARKET_DATA_DIR, CACHE_DIR, CACHE_TTL_SECONDS
 from backend.patterns import detect_patterns
+from backend.stock_db import get_db
 
 router = APIRouter()
 
 
 def _get_stock_list() -> dict:
-    """从本地CSV获取股票名称映射 {code: name}"""
-    today = date.today()
-    for i in range(4):
-        d = today.isoformat() if i == 0 else pd.Timestamp(today - pd.Timedelta(days=i)).strftime("%Y-%m-%d")
-        path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
-        if path.exists():
-            df = pd.read_csv(path, encoding="utf-16", sep="\t")
-            df["代码"] = df["代码"].astype(str).str.strip("'\"")
-            return dict(zip(df["代码"], df["名称"]))
-    return {}
+    """从SQLite stock_info表获取股票名称映射 {code: name}"""
+    conn = get_db()
+    rows = conn.execute("SELECT code, name FROM stock_info").fetchall()
+    conn.close()
+    return {r["code"]: r["name"] for r in rows}
 
 
 def _get_ma(df: pd.DataFrame, period: int) -> float | None:
