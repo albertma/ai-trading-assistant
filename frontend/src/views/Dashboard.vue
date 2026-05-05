@@ -55,6 +55,77 @@
             </el-col>
         </el-row>
 
+        <!-- 市场情绪周期 -->
+        <el-card v-if="!noData && cycleRecords.length" shadow="hover" style="margin-top:16px;margin-bottom:16px;">
+            <template #header>
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <b>📊 市场情绪周期</b>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <el-tag v-if="currentCycleLabel" :type="cycleTagType" size="large" effect="dark">
+                            {{ currentCycleLabel }}
+                        </el-tag>
+                        <el-button size="small" text @click="cycleCollapsed = !cycleCollapsed">
+                            {{ cycleCollapsed ? '展开分析' : '收起' }}
+                        </el-button>
+                    </div>
+                </div>
+            </template>
+            <template v-if="!cycleCollapsed">
+                <!-- 周期时间线 -->
+                <div style="display:flex;gap:4px;margin-bottom:16px;overflow-x:auto;padding:8px 0;">
+                    <div v-for="(r, i) in cycleRecords" :key="r.date"
+                        style="flex:1;min-width:90px;text-align:center;padding:8px 6px;border-radius:8px;border:1px solid #334;position:relative;"
+                        :style="{ background: cycleBgColor(r.stage) }">
+                        <div style="font-size:11px;color:#909399;">{{ r.date.slice(5) }}</div>
+                        <div style="font-size:13px;font-weight:bold;margin:4px 0;">{{ r.stage_label }}</div>
+                        <div style="font-size:11px;">
+                            <span :style="{color: r.avg_change_pct >= 0 ? '#f56c6c' : '#67c23a'}">{{ r.avg_change_pct >= 0 ? '+' : '' }}{{ r.avg_change_pct }}%</span>
+                        </div>
+                        <div style="font-size:10px;color:#909399;">↑{{ r.up }}/↓{{ r.down }}</div>
+                        <div v-if="i < cycleRecords.length - 1" style="position:absolute;right:-6px;top:50%;transform:translateY(-50%);color:#555;font-size:14px;">→</div>
+                    </div>
+                </div>
+                <!-- 详细数据表 -->
+                <el-table :data="cycleRecords" size="small" stripe style="width:100%;margin-bottom:12px;">
+                    <el-table-column label="日期" width="80">
+                        <template #default="{ row }">{{ row.date.slice(5) }}</template>
+                    </el-table-column>
+                    <el-table-column label="周期阶段" width="110">
+                        <template #default="{ row }">
+                            <el-tag :type="cycleTagTypeByStage(row.stage)" size="small">{{ row.stage_label }}</el-tag>
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="涨跌比" width="70">
+                        <template #default="{ row }">{{ row.ratio }}</template>
+                    </el-table-column>
+                    <el-table-column label="均涨幅" width="80">
+                        <template #default="{ row }">
+                            <span :style="{color: row.avg_change_pct >= 0 ? '#f56c6c' : '#67c23a'}">{{ row.avg_change_pct >= 0 ? '+' : '' }}{{ row.avg_change_pct }}%</span>
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="↑上涨" width="60">
+                        <template #default="{ row }">{{ row.up }}</template>
+                    </el-table-column>
+                    <el-table-column label="↓下跌" width="60">
+                        <template #default="{ row }">{{ row.down }}</template>
+                    </el-table-column>
+                    <el-table-column label="涨停" width="60">
+                        <template #default="{ row }">{{ row.limit_up }}</template>
+                    </el-table-column>
+                    <el-table-column label="跌停" width="60">
+                        <template #default="{ row }">{{ row.limit_down }}</template>
+                    </el-table-column>
+                </el-table>
+                <!-- 趋势判断 -->
+                <div v-if="cycleAssessment.outlook" style="padding:10px 14px;border-radius:8px;border:1px solid #334;font-size:13px;line-height:1.6;"
+                    :style="{ background: cycleAssessmentBg }">
+                    <div style="margin-bottom:4px;"><b>🔮 趋势判断</b></div>
+                    <div>涨跌比趋势：<b>{{ cycleTrendLabel(cycleAssessment.ratio_trend) }}</b> · 均涨幅趋势：<b>{{ cycleTrendLabel(cycleAssessment.avg_trend) }}</b> · 涨停数趋势：<b>{{ cycleTrendLabel(cycleAssessment.limit_trend) }}</b></div>
+                    <div style="margin-top:4px;">操作策略：<b>{{ cycleOutlookText }}</b></div>
+                </div>
+            </template>
+        </el-card>
+
         <template v-if="!noData">
             <el-row :gutter="16" style="margin-top: 16px;">
                 <el-col :span="12">
@@ -171,7 +242,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { getMarketOverview, getMarketDates } from '../api/index.js'
+import { getMarketOverview, getMarketDates, getSentimentCycle } from '../api/index.js'
 
 const loading = ref(true)
 const noData = ref(false)
@@ -181,6 +252,14 @@ const dataSession = ref('close')
 const sessionsAvailable = ref(['close'])
 const availableDates = ref([])
 const sessionsByDate = ref({})
+
+// 情绪周期
+const cycleRecords = ref([])
+const currentCycleLabel = ref('')
+const currentCycleStage = ref('')
+const cycleAssessment = ref({})
+const cycleCollapsed = ref(false)
+const cycleLoading = ref(false)
 
 // 日期选择
 const selectedDate = ref(null)
@@ -288,6 +367,62 @@ function onSessionChange(val) {
     loadData(dataDate.value)
 }
 
+// ===== 情绪周期 =====
+const cycleTagType = computed(() => {
+    const m = { ice: 'danger', ice_recovery: 'warning', launch: 'info', fermentation: 'success', climax: 'danger', recession: 'warning', transition: 'info' }
+    return m[currentCycleStage.value] || 'info'
+})
+
+function cycleTagTypeByStage(stage) {
+    const m = { ice: 'danger', ice_recovery: 'warning', launch: 'info', fermentation: 'success', climax: 'danger', recession: 'warning', transition: 'info' }
+    return m[stage] || 'info'
+}
+
+function cycleBgColor(stage) {
+    const m = { ice: 'rgba(245,108,108,0.15)', ice_recovery: 'rgba(230,162,60,0.15)', launch: 'rgba(64,158,255,0.15)', fermentation: 'rgba(103,194,58,0.15)', climax: 'rgba(245,108,108,0.25)', recession: 'rgba(230,162,60,0.15)', transition: 'rgba(144,147,153,0.1)' }
+    return m[stage] || 'rgba(144,147,153,0.1)'
+}
+
+function cycleTrendLabel(t) {
+    return { rising: '📈 上升', falling: '📉 下降', flat: '➡️ 持平' }[t] || t
+}
+
+const cycleAssessmentBg = computed(() => {
+    const o = cycleAssessment.value?.outlook
+    if (o === 'bullish' || o === 'cautious_bullish') return 'rgba(103,194,58,0.08)'
+    if (o === 'defensive' || o === 'wait_for_signal') return 'rgba(245,108,108,0.08)'
+    if (o === 'watch_for_reversal') return 'rgba(230,162,60,0.08)'
+    return 'rgba(144,147,153,0.06)'
+})
+
+const cycleOutlookText = computed(() => {
+    const m = {
+        cautious_bullish: '谨慎看多 — 情绪处于高位，注意分歧加大，建议控制仓位参与主线',
+        watch_for_reversal: '警惕回调 — 情绪从高位回落，注意退潮风险，建议减仓防御',
+        wait_for_signal: '等待信号 — 市场冰点，不要抄底，等反弹确认后再入场',
+        recovery_emerging: '冰点反弹初现 — 小仓位试盘，确认放量再加仓',
+        bullish: '积极看多 — 情绪回暖，可适当加仓参与新题材',
+        defensive: '防御为主 — 情绪走弱，减仓观望，等待冰点后的机会',
+        neutral: '中性观望 — 方向不明，多看少动',
+    }
+    return m[cycleAssessment.value?.outlook] || '观望'
+})
+
+async function loadSentimentCycle() {
+    cycleLoading.value = true
+    try {
+        const { data } = await getSentimentCycle(7)
+        cycleRecords.value = data.records || []
+        currentCycleLabel.value = data.current_label || ''
+        currentCycleStage.value = data.current_stage || ''
+        cycleAssessment.value = data.assessment || {}
+    } catch (e) {
+        console.error('情绪周期加载失败', e)
+    } finally {
+        cycleLoading.value = false
+    }
+}
+
 onMounted(async () => {
     // 先获取可选日期列表
     try {
@@ -306,6 +441,8 @@ onMounted(async () => {
     }
     // 加载最新数据
     await loadData(selectedDate.value)
+    // 加载情绪周期
+    await loadSentimentCycle()
 })
 </script>
 

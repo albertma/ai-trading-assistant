@@ -19,6 +19,10 @@ export function getSectors(date) {
     return api.get('/market/sectors', { params })
 }
 
+export function getSentimentCycle(days = 7) {
+    return api.get('/market/sentiment-cycle', { params: { days } })
+}
+
 // ========== 持仓 ==========
 export function getPositions() {
     return api.get('/positions')

@@ -234,6 +234,118 @@ def market_overview(
     }
 
 
+@router.get("/sentiment-cycle")
+def sentiment_cycle(
+    days: int = Query(7, description="回溯天数"),
+):
+    """市场情绪周期分析：返回最近N个交易日的情绪指标时序"""
+    dates_info = _list_available()
+    # 取最近N个有close数据的交易日
+    close_dates = []
+    for d in dates_info:
+        if "close" in d["sessions"]:
+            close_dates.append(d["date"])
+            if len(close_dates) >= days:
+                break
+
+    records = []
+    for d in reversed(close_dates):
+        df = _load_csv(d, "close")
+        if df is None:
+            continue
+        valid = df[df["change_pct"].notna()]
+        up = int((valid["change_pct"] > 0).sum())
+        down = int((valid["change_pct"] < 0).sum())
+        total = up + down
+        ratio = round(up / total, 2) if total else 0.5
+        limit_up = int((valid["change_pct"] >= 9.8).sum())
+        limit_down = int((valid["change_pct"] <= -9.8).sum())
+        avg_chg = round(float(valid["change_pct"].mean()), 2)
+        total_stocks = int(len(valid))
+
+        # 判断周期阶段
+        stage = _classify_cycle_stage(ratio, avg_chg, limit_up, limit_down, total)
+
+        records.append({
+            "date": d,
+            "up": up,
+            "down": down,
+            "ratio": ratio,
+            "limit_up": limit_up,
+            "limit_down": limit_down,
+            "avg_change_pct": avg_chg,
+            "total_stocks": total_stocks,
+            "stage": stage["stage"],
+            "stage_label": stage["label"],
+        })
+
+    # 综合当前阶段判断
+    current = records[-1] if records else None
+    assessment = _assess_cycle(records) if records else {}
+
+    return {
+        "records": records,
+        "current_stage": current["stage"] if current else None,
+        "current_label": current["stage_label"] if current else None,
+        "assessment": assessment,
+    }
+
+
+def _classify_cycle_stage(ratio: float, avg_chg: float, limit_up: int, limit_down: int, total: int) -> dict:
+    """根据情绪指标判断周期阶段"""
+    if ratio < 0.35 or (avg_chg < -0.8 and ratio < 0.4):
+        return {"stage": "ice", "label": "冰点期 ❄️"}
+    if ratio < 0.45 or (avg_chg < -0.3 and ratio < 0.48):
+        return {"stage": "ice_recovery", "label": "冰点反弹 🔄"}
+    if ratio > 0.7 and limit_up > 120:
+        return {"stage": "climax", "label": "高潮期 🔥"}
+    if ratio > 0.65 and limit_up > 100:
+        return {"stage": "fermentation", "label": "发酵期 🟢"}
+    if ratio > 0.55 and limit_up > 80:
+        return {"stage": "launch", "label": "启动期 💡"}
+    if ratio < 0.48 and avg_chg < -0.2:
+        return {"stage": "recession", "label": "退潮期 🔴"}
+    return {"stage": "transition", "label": "过渡期 ⚖️"}
+
+
+def _assess_cycle(records: list) -> dict:
+    """综合评估周期趋势"""
+    if len(records) < 3:
+        return {"trend": "数据不足", "outlook": "neutral"}
+
+    recent = records[-3:]
+    ratios = [r["ratio"] for r in recent]
+    avgs = [r["avg_change_pct"] for r in recent]
+    limits = [r["limit_up"] for r in recent]
+
+    # 趋势方向
+    ratio_trend = "rising" if ratios[-1] > ratios[0] else "falling" if ratios[-1] < ratios[0] else "flat"
+    avg_trend = "rising" if avgs[-1] > avgs[0] else "falling" if avgs[-1] < avgs[0] else "flat"
+    limit_trend = "rising" if limits[-1] > limits[0] else "falling" if limits[-1] < limits[0] else "flat"
+
+    # 当前阶段
+    current_stage = records[-1]["stage"]
+
+    # 综合判断
+    if current_stage in ("climax", "fermentation"):
+        outlook = "cautious_bullish" if ratio_trend == "rising" else "watch_for_reversal"
+    elif current_stage == "ice":
+        outlook = "wait_for_signal" if ratio_trend == "flat" else "recovery_emerging"
+    elif current_stage == "launch":
+        outlook = "bullish"
+    elif current_stage in ("recession", "ice_recovery"):
+        outlook = "defensive"
+    else:
+        outlook = "neutral"
+
+    return {
+        "ratio_trend": ratio_trend,
+        "avg_trend": avg_trend,
+        "limit_trend": limit_trend,
+        "outlook": outlook,
+    }
+
+
 @router.get("/sectors")
 def sector_list(
     date: str = Query(None, description="日期 YYYY-MM-DD，不传则取最近"),
