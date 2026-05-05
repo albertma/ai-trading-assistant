@@ -9,6 +9,7 @@ from pathlib import Path
 
 from backend.config import MARKET_DATA_DIR
 import sqlite3
+import json
 import os
 
 DB_PATH = os.path.expanduser("~/Jarvis/ai_trading/stock_archive.db")
@@ -255,6 +256,79 @@ _INDUSTRY_CHAIN_MAP = {
     },
 }
 
+# ─── 产业链配置：从SQLite动态加载，无则fallback到硬编码 ───
+def _get_chain_def(industry: str) -> dict | None:
+    """从SQLite获取产业链配置，无记录则用_INDUSTRY_CHAIN_MAP兜底"""
+    if not industry:
+        return None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT chain_data FROM industry_chain WHERE industry=?", (industry,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return json.loads(row[0])
+    except Exception:
+        pass
+    return _INDUSTRY_CHAIN_MAP.get(industry)
+
+
+def _get_all_chain_industries() -> list[dict]:
+    """获取所有已配置产业链的行业列表"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT industry, chain_data, updated_at, notes FROM industry_chain ORDER BY industry")
+        rows = c.fetchall()
+        conn.close()
+        result = []
+        for r in rows:
+            try:
+                d = json.loads(r[1])
+            except Exception:
+                d = {}
+            result.append({
+                "industry": r[0],
+                "chains": d,
+                "updated_at": r[2],
+                "notes": r[3] or ""
+            })
+        return result
+    except Exception:
+        return []
+
+
+def _save_chain_def(industry: str, chain_data: dict, notes: str = "") -> bool:
+    """保存产业链配置到SQLite"""
+    try:
+        from datetime import datetime
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""
+            INSERT OR REPLACE INTO industry_chain (industry, chain_data, updated_at, notes)
+            VALUES (?, ?, ?, ?)
+        """, (industry, json.dumps(chain_data, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), notes))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"保存产业链失败: {e}", flush=True)
+        return False
+
+
+def _delete_chain_def(industry: str) -> bool:
+    """删除产业链配置"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("DELETE FROM industry_chain WHERE industry=?", (industry,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
 
 def _get_supply_chain(sector: str | None) -> list | None:
     """获取行业供应链上下游的概念板块及代表股"""
@@ -270,7 +344,7 @@ def _get_supply_chain(sector: str | None) -> list | None:
     if cached and (now - cached["ts"]) < _CHAIN_CACHE_TTL:
         return cached["data"]
 
-    chain_def = _INDUSTRY_CHAIN_MAP.get(sector)
+    chain_def = _get_chain_def(sector)
     if not chain_def:
         return None
 
@@ -830,7 +904,7 @@ def _analyze_industry_cycle(sector: str, industry_data: dict | None) -> dict | N
         cycle_risk = "不宜参与，等待反转信号"
     
     # ---- 2. 产业链各环节供需矛盾分析 ----
-    chain_map = _INDUSTRY_CHAIN_MAP.get(sector, {})
+    chain_map = _get_chain_def(sector) or {}
     board_data = _get_concept_board_data()
     chain_analysis = []
     chain_scores = []
@@ -969,6 +1043,197 @@ def _analyze_industry_cycle(sector: str, industry_data: dict | None) -> dict | N
         "short_term": short_term,
     }
 
+
+# ============================================================
+# 8. 产业链管理 API (动态增删改 + 智能提取)
+# ============================================================
+import re as _re
+import requests as _requests
+from bs4 import BeautifulSoup as _BeautifulSoup
+
+# 公司名模糊匹配黑名单（常见词根造成误匹）
+_COMMON_FALSE = {"中国", "东方", "南方", "北方", "国际", "集团", "股份", "科技", "电子", 
+                  "龙头", "高新", "智能", "数字", "信息", "第一", "龙头股份"}
+
+@router.get("/chain-admin")
+def list_chains():
+    return {"success": True, "data": _get_all_chain_industries()}
+
+@router.get("/chain-admin/concept-boards")
+def list_concept_boards():
+    try:
+        import akshare as ak
+        df = ak.stock_board_concept_name_em()
+        boards = [{"name": r["板块名称"], "code": r["板块代码"]} for _, r in df.iterrows()]
+        return {"success": True, "data": boards}
+    except Exception as e:
+        return {"success": False, "msg": f"获取概念板块失败: {e}"}
+
+@router.post("/chain-admin/extract")
+def extract_chain_from_article(body: dict):
+    content = body.get("content", "")
+    url = body.get("url", "")
+    if url: content = _fetch_url_text(url)
+    if not content or len(content) < 20:
+        raise HTTPException(status_code=400, detail="内容太短")
+
+    codes = _find_stock_codes(content)
+    companies = _find_company_names(content)
+    if codes:
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            for code in codes:
+                if not any(co["code"] == code for co in companies):
+                    c.execute("SELECT code,name,industry FROM stock_info WHERE code=?", (code,))
+                    r = c.fetchone()
+                    if r:
+                        companies.append({"code": r[0], "name": r[1], "industry": r[2] or "", "match_type": "code"})
+            conn.close()
+        except Exception: pass
+
+    industry = _guess_industry(content)
+    stages = _extract_stages(content, companies)
+    seen = set()
+    unique = []
+    for c in companies:
+        if c["code"] not in seen: seen.add(c["code"]); unique.append(c)
+
+    return {"success": True, "data": {
+        "industry": industry or "自动识别中...", "stages": stages,
+        "companies": unique[:50],
+        "content_preview": content[:800] + ("..." if len(content) > 800 else ""),
+        "source": "url" if url else "text", "total_companies": len(unique),
+    }}
+
+@router.post("/chain-admin/extract/save")
+def save_extracted_chain(body: dict):
+    industry = body.get("industry", "").strip()
+    stages = body.get("stages", [])
+    notes = body.get("notes", "")
+    if not industry: raise HTTPException(status_code=400, detail="行业名不能为空")
+    chain_data = {}
+    for s in stages:
+        name = s.get("name", "").strip()
+        boards = s.get("boards", [])
+        if name and boards: chain_data[name] = boards
+    if not chain_data: raise HTTPException(status_code=400, detail="产业链数据为空")
+    ok = _save_chain_def(industry, chain_data, notes)
+    return {"success": True, "msg": f"✅ [{industry}] 保存成功"} if ok else HTTPException(500, "保存失败")
+
+
+@router.get("/chain-admin/{industry}")
+def get_chain(industry: str):
+    data = _get_chain_def(industry)
+    if data:
+        return {"success": True, "data": data}
+    return {"success": False, "msg": "该行业暂无产业链配置"}
+
+@router.post("/chain-admin/{industry}")
+def save_chain(industry: str, body: dict):
+    chain_data = body.get("chain_data")
+    notes = body.get("notes", "")
+    if not chain_data or not isinstance(chain_data, dict):
+        raise HTTPException(status_code=400, detail="chain_data 必须为非空字典")
+    ok = _save_chain_def(industry, chain_data, notes)
+    if ok:
+        return {"success": True, "msg": f"✅ 产业链 [{industry}] 保存成功"}
+    raise HTTPException(status_code=500, detail="保存失败")
+
+@router.delete("/chain-admin/{industry}")
+def delete_chain(industry: str):
+    ok = _delete_chain_def(industry)
+    if ok:
+        return {"success": True, "msg": f"🗑️ 产业链 [{industry}] 已删除"}
+    raise HTTPException(status_code=500, detail="删除失败")
+
+@router.get("/chain-admin/industries/unmapped")
+def list_unmapped_industries():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT DISTINCT industry FROM stock_info WHERE industry IS NOT NULL AND industry != '' AND industry != '--'")
+        all_industries = {r[0] for r in c.fetchall()}
+        c.execute("SELECT industry FROM industry_chain")
+        mapped = {r[0] for r in c.fetchall()}
+        conn.close()
+        unmapped = sorted(all_industries - mapped)
+        return {"success": True, "data": unmapped, "total": len(unmapped), "mapped": len(mapped)}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+
+# ─── 智能提取 ─────────────────────────────────────
+
+def _fetch_url_text(url: str) -> str:
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+    try:
+        r = _requests.get(url, headers=headers, timeout=15)
+        r.raise_for_status()
+        soup = _BeautifulSoup(r.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.decompose()
+        lines = [l.strip() for l in soup.get_text(separator="\n").split("\n") if l.strip()]
+        return "\n".join(lines)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"抓取URL失败: {e}")
+
+def _find_stock_codes(text: str) -> list[str]:
+    candidates = set(_re.findall(r'\b(6\d{5}|30\d{4}|00\d{4}|68\d{4}|8\d{5}|4\d{5})\b', text))
+    if not candidates:
+        return []
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        placeholders = ",".join("?" for _ in candidates)
+        c.execute(f"SELECT code FROM stock_info WHERE code IN ({placeholders})", list(candidates))
+        valid = {r[0] for r in c.fetchall()}
+        conn.close()
+        return sorted(valid)
+    except Exception:
+        return sorted(candidates)
+
+def _find_company_names(text: str) -> list[dict]:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT code, name, industry FROM stock_info")
+        all_stocks = c.fetchall()
+        conn.close()
+    except Exception:
+        return []
+    found = []
+    for code, name, industry in all_stocks:
+        if not name: continue
+        if name in text:
+            found.append({"code": code, "name": name, "industry": industry or "", "match_type": "exact"})
+            continue
+        short = _re.sub(r"[（(].*?[）)]|股份|有限|公司|集团|控股|科技|实业|国际|电子|技术|发展|工业|股份有限", "", name).strip()
+        if len(short) >= 3 and short in text and short not in _COMMON_FALSE:
+            
+            found.append({"code": code, "name": name, "industry": industry or "", "match_type": "fuzzy"})
+    return found
+
+def _guess_industry(text: str) -> str | None:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT DISTINCT industry FROM stock_info WHERE industry!='' AND industry!='--'")
+        industries = [r[0] for r in c.fetchall()]
+        conn.close()
+    except Exception:
+        return None
+    scores = [(text.count(ind), ind) for ind in industries if ind in text]
+    return max(scores)[1] if scores else None
+
+def _extract_stages(text: str, companies: list[dict]) -> list[dict]:
+    stages = []
+    for role, keywords in [("上游", ["上游","原材料","资源","设备","材料","原料"]),
+                           ("中游", ["中游","制造","加工","生产","组件","电池","零部件"]),
+                           ("下游", ["下游","应用","终端","运营","服务","销售","整车"])]:
+        boards = list(set(_re.findall(r'[\u4e00-\u9fa5]{2,8}(?:概念|板块|行业|产业)', text)))[:5]
+        matched = [c["name"] for c in companies if any(kw in c["name"] for kw in keywords)][:10]
+        stages.append({"name": role, "boards": boards, "matched_companies": matched})
+    return stages
 
 @router.get("/{code}")
 def fundamental_analysis(code: str):

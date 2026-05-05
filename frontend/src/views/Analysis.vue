@@ -878,26 +878,133 @@
                             <el-alert :title="'📈 短期判断: ' + cycleAnalysis.short_term" type="info" :closable="false" show-icon style="font-size:12px;" />
                         </el-card>
 
-                        <!-- 思维模型卡片 -->
+                        <!-- 思维模型卡片 — 点击展开显示详细分析 -->
                         <el-card shadow="hover" style="border:1px solid #334;">
-                            <template #header><b>🧠 分析思维模型</b></template>
+                            <template #header><b>🧠 分析思维模型</b> <span style="font-size:12px;color:#909399;font-weight:normal;">点击卡片展开详细分析</span></template>
                             <el-row :gutter="12">
                                 <el-col :span="8">
-                                    <el-card shadow="never" style="background:rgba(255,255,255,0.03);height:100%;">
+                                    <el-card shadow="never" :class="['model-card', expandedModel === 'cycle' ? 'model-card-active' : '']"
+                                        style="background:rgba(255,255,255,0.03);height:100%;cursor:pointer;transition:all 0.2s;"
+                                        @click="expandedModel = expandedModel === 'cycle' ? null : 'cycle'">
                                         <div style="font-size:16px;margin-bottom:6px;">🏭 行业景气周期</div>
                                         <p style="font-size:12px;color:#b0b0b0;line-height:1.6;">通过板块涨幅、上涨占比、排名等判定处于过热/扩张/复苏/调整/衰退哪个阶段，判断行业方向的基座模型</p>
+                                        <div v-if="cycleAnalysis" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+                                            <el-tag size="small" :type="cycleAnalysis.cycle_score >= 70 ? 'danger' : cycleAnalysis.cycle_score >= 50 ? 'warning' : 'info'">{{ cycleAnalysis.cycle_stage }}</el-tag>
+                                            <el-tag size="small" type="info">{{ cycleAnalysis.cycle_score }}分</el-tag>
+                                        </div>
+                                        <!-- 展开详情 -->
+                                        <el-collapse-transition>
+                                            <div v-if="expandedModel === 'cycle'" style="margin-top:12px;padding-top:12px;border-top:1px solid #334;">
+                                                <el-descriptions :column="2" border size="small" direction="vertical">
+                                                    <el-descriptions-item label="判定阶段">
+                                                        <el-tag :type="cycleAnalysis.cycle_score >= 70 ? 'danger' : cycleAnalysis.cycle_score >= 50 ? 'warning' : 'info'" size="small">{{ cycleAnalysis.cycle_stage }}</el-tag>
+                                                    </el-descriptions-item>
+                                                    <el-descriptions-item label="景气评分">{{ cycleAnalysis.cycle_score }} / 100</el-descriptions-item>
+                                                    <el-descriptions-item label="详细解读" :span="2">{{ cycleAnalysis.cycle_desc }}</el-descriptions-item>
+                                                    <el-descriptions-item label="风险提示" :span="2">{{ cycleAnalysis.cycle_risk }}</el-descriptions-item>
+                                                </el-descriptions>
+                                                <div v-if="industryOutlook" style="margin-top:10px;">
+                                                    <div style="font-size:13px;font-weight:bold;margin-bottom:6px;">📊 板块数据（{{ industryOutlook.date }}）</div>
+                                                    <el-row :gutter="8">
+                                                        <el-col :span="6"><el-statistic title="板块排名" :value="`${industryOutlook.rank}/${industryOutlook.total_sectors}`" /></el-col>
+                                                        <el-col :span="6"><el-statistic title="平均涨幅" :value="industryOutlook.avg_change" suffix="%" :value-style="{ color: (industryOutlook.avg_change||0) >= 0 ? '#f56c6c' : '#67c23a' }" /></el-col>
+                                                        <el-col :span="6"><el-statistic title="上涨占比" :value="industryOutlook.up_ratio" suffix="%" /></el-col>
+                                                        <el-col :span="6"><el-statistic title="成份股" :value="industryOutlook.stock_count" suffix="只" /></el-col>
+                                                    </el-row>
+                                                </div>
+                                            </div>
+                                        </el-collapse-transition>
                                     </el-card>
                                 </el-col>
                                 <el-col :span="8">
-                                    <el-card shadow="never" style="background:rgba(255,255,255,0.03);height:100%;">
+                                    <el-card shadow="never" :class="['model-card', expandedModel === 'supply' ? 'model-card-active' : '']"
+                                        style="background:rgba(255,255,255,0.03);height:100%;cursor:pointer;transition:all 0.2s;"
+                                        @click="expandedModel = expandedModel === 'supply' ? null : 'supply'">
                                         <div style="font-size:16px;margin-bottom:6px;">🔗 供需矛盾分析</div>
                                         <p style="font-size:12px;color:#b0b0b0;line-height:1.6;">沿产业链上游→中游→下游，逐一分析各环节供需状态、资金流向，定位卡脖子环节与薄弱环节</p>
+                                        <div v-if="cycleAnalysis" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+                                            <el-tag size="small" :type="(cycleAnalysis.supply_score||0) >= 70 ? 'danger' : (cycleAnalysis.supply_score||0) >= 45 ? 'warning' : 'success'">评分{{ cycleAnalysis.supply_score }}</el-tag>
+                                            <el-tag size="small" type="info">{{ cycleAnalysis.supply_demand }}</el-tag>
+                                        </div>
+                                        <!-- 展开详情 -->
+                                        <el-collapse-transition>
+                                            <div v-if="expandedModel === 'supply'" style="margin-top:12px;padding-top:12px;border-top:1px solid #334;">
+                                                <el-descriptions :column="1" border size="small">
+                                                    <el-descriptions-item label="供需总评分">{{ cycleAnalysis.supply_score }}分 — {{ (cycleAnalysis.supply_score||0) >= 70 ? '矛盾突出' : (cycleAnalysis.supply_score||0) >= 45 ? '局部矛盾' : '供需平衡' }}</el-descriptions-item>
+                                                    <el-descriptions-item label="卡脖子环节">{{ cycleAnalysis.supply_desc }}</el-descriptions-item>
+                                                    <el-descriptions-item label="全链概览">{{ cycleAnalysis.supply_outlook }}</el-descriptions-item>
+                                                </el-descriptions>
+                                                <!-- 产业链各环节 -->
+                                                <div v-if="chainAnalysis && chainAnalysis.length" style="margin-top:10px;">
+                                                    <div style="font-size:13px;font-weight:bold;margin-bottom:6px;">🔗 产业链逐环节</div>
+                                                    <el-timeline>
+                                                        <el-timeline-item v-for="s in chainAnalysis" :key="s.stage"
+                                                            :color="(s.status_score||0) >= 70 ? '#f56c6c' : (s.status_score||0) >= 45 ? '#e6a23c' : '#67c23a'"
+                                                            :timestamp="`评分${s.status_score}`" placement="top">
+                                                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                                                                <b>{{ s.stage }}</b>
+                                                                <el-tag size="small" :type="(s.status_score||0) >= 70 ? 'danger' : (s.status_score||0) >= 45 ? 'warning' : 'success'">{{ s.status }}</el-tag>
+                                                                <span v-if="s.avg_change != null" style="font-size:12px;color:#909399;">涨幅 {{ s.avg_change >= 0 ? '+' : '' }}{{ s.avg_change }}%</span>
+                                                            </div>
+                                                            <p style="font-size:12px;color:#b0b0b0;margin:0 0 4px 0;">{{ s.desc }}</p>
+                                                            <el-tag v-if="s.opp_risk" size="small" :type="s.opp_risk.includes('✅') || s.opp_risk.includes('➡️') ? 'info' : 'warning'" style="font-size:11px;">{{ s.opp_risk }}</el-tag>
+                                                        </el-timeline-item>
+                                                    </el-timeline>
+                                                </div>
+                                            </div>
+                                        </el-collapse-transition>
                                     </el-card>
                                 </el-col>
                                 <el-col :span="8">
-                                    <el-card shadow="never" style="background:rgba(255,255,255,0.03);height:100%;">
+                                    <el-card shadow="never" :class="['model-card', expandedModel === 'order2' ? 'model-card-active' : '']"
+                                        style="background:rgba(255,255,255,0.03);height:100%;cursor:pointer;transition:all 0.2s;"
+                                        @click="expandedModel = expandedModel === 'order2' ? null : 'order2'">
                                         <div style="font-size:16px;margin-bottom:6px;">📊 二阶效应</div>
                                         <p style="font-size:12px;color:#b0b0b0;line-height:1.6;">行业趋势的传导效应：上游涨价→中游成本承压→下游终端传导，寻找二阶机会与风险位置</p>
+                                        <div v-if="cycleAnalysis" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+                                            <el-tag size="small" :type="(cycleAnalysis.outlook_score||0) >= 65 ? 'success' : (cycleAnalysis.outlook_score||0) >= 45 ? 'warning' : 'danger'">{{ cycleAnalysis.outlook_label }}</el-tag>
+                                            <el-tag size="small" type="info">{{ cycleAnalysis.outlook_score }}分</el-tag>
+                                        </div>
+                                        <!-- 展开详情 -->
+                                        <el-collapse-transition>
+                                            <div v-if="expandedModel === 'order2'" style="margin-top:12px;padding-top:12px;border-top:1px solid #334;">
+                                                <el-descriptions :column="2" border size="small">
+                                                    <el-descriptions-item label="综合评分">{{ cycleAnalysis.outlook_score }} / 100</el-descriptions-item>
+                                                    <el-descriptions-item label="方向判断"><span style="font-size:16px;font-weight:bold;">{{ cycleAnalysis.outlook_dir }}</span></el-descriptions-item>
+                                                    <el-descriptions-item label="评估结论" :span="2">{{ cycleAnalysis.outlook_label }}</el-descriptions-item>
+                                                    <el-descriptions-item label="短期判断" :span="2">{{ cycleAnalysis.short_term }}</el-descriptions-item>
+                                                </el-descriptions>
+                                                <div style="margin-top:10px;font-size:12px;color:#b0b0b0;line-height:1.8;">
+                                                    <div style="font-weight:bold;color:#ccc;margin-bottom:4px;">🔍 二阶效应推理过程</div>
+                                                    <div v-if="chainAnalysis && chainAnalysis.length >= 3">
+                                                        <div v-for="(s, si) in chainAnalysis" :key="si" style="padding:4px 0;">
+                                                            <template v-if="si === 0">
+                                                                🔼 <b>上游</b>（{{ s.stage }}）：{{ s.status }}，涨幅{{ s.avg_change >= 0 ? '+' : '' }}{{ s.avg_change }}% →
+                                                                   <span v-if="s.status_score < 45">成本端有下行空间，利好中下游</span>
+                                                                   <span v-else-if="s.status_score >= 70">上游供不应求，涨价压力即将向下传导</span>
+                                                                   <span v-else>上游平稳，成本端无显著扰动</span>
+                                                            </template>
+                                                            <template v-else-if="si === 1">
+                                                                🔽 <b>中游</b>（{{ s.stage }}）：{{ s.status }}，涨幅{{ s.avg_change >= 0 ? '+' : '' }}{{ s.avg_change }}% →
+                                                                   <span v-if="s.status_score < 45">需求偏弱，库存可能积压</span>
+                                                                   <span v-else-if="s.status_score >= 70">需求旺盛，但有上游涨价侵蚀利润的风险</span>
+                                                                   <span v-else>运营平稳</span>
+                                                            </template>
+                                                            <template v-else-if="si === 2">
+                                                                ⏬ <b>下游</b>（{{ s.stage }}）：{{ s.status }}，涨幅{{ s.avg_change >= 0 ? '+' : '' }}{{ s.avg_change }}% →
+                                                                   <span v-if="s.status_score < 45">终端需求疲软，涨价传导不顺畅</span>
+                                                                   <span v-else-if="s.status_score >= 70">终端需求旺盛，能够消化上游涨价</span>
+                                                                   <span v-else>终端平稳</span>
+                                                            </template>
+                                                        </div>
+                                                        <el-divider style="margin:8px 0;" />
+                                                        <div style="font-weight:bold;color:#e6a23c;padding:4px 0;">
+                                                            💡 综合判断：{{ cycleAnalysis.short_term }}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </el-collapse-transition>
                                     </el-card>
                                 </el-col>
                             </el-row>
@@ -925,6 +1032,11 @@
                     </el-card>
                 </template>
                 <el-empty v-else-if="!industryLoading" description="暂无行业数据" />
+                <div style="text-align:center;margin-top:12px;">
+                    <el-button size="small" type="info" plain @click="$router.push('/chains')">
+                        🔗 管理产业链配置
+                    </el-button>
+                </div>
             </el-tab-pane>
 
             <!-- Tab 4: 档案 -->
@@ -1324,6 +1436,7 @@ const selectedContradiction = ref(null)
 const industryLoading = ref(false)
 const industrySupplyData = ref(null)
 const activeChainStage = ref('0')
+const expandedModel = ref(null)
 
 const cycleAnalysis = computed(() => fundData.value?.industry_outlook?.cycle_analysis || null)
 const industryOutlook = computed(() => fundData.value?.industry_outlook || null)
@@ -2461,4 +2574,14 @@ async function clearChatHistoryLocal() {
 .dupont-factor-title { font-size: 13px; color: #909399; margin-bottom: 8px; }
 .dupont-factor-value { font-size: 28px; font-weight: bold; color: #e6a23c; margin-bottom: 6px; }
 .dupont-factor-desc { font-size: 11px; color: #c0c4cc; }
+
+/* ===== 思维模型卡片 ===== */
+.model-card-active {
+    border-color: #409eff !important;
+    box-shadow: 0 0 0 1px #409eff inset !important;
+    background: rgba(64,158,255,0.05) !important;
+}
+.model-card:hover {
+    border-color: #5a5a7a !important;
+}
 </style>

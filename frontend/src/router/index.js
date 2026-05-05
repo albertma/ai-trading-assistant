@@ -8,6 +8,8 @@ import RiskRules from '../views/RiskRules.vue'
 import Reports from '../views/Reports.vue'
 import Watchlist from '../views/Watchlist.vue'
 import PositionsAnalysis from '../views/PositionsAnalysis.vue'
+import ChainManager from '../views/ChainManager.vue'
+import KnowledgeGraph from '../views/KnowledgeGraph.vue'
 
 const routes = [
     { path: '/', name: 'Dashboard', component: Dashboard, meta: { title: '市场概览', icon: 'DataAnalysis' } },
@@ -18,6 +20,8 @@ const routes = [
     { path: '/risk', name: 'RiskCheck', component: RiskCheck, meta: { title: '风控检查', icon: 'WarningFilled' } },
     { path: '/risk-rules', name: 'RiskRules', component: RiskRules, meta: { title: '风控规则', icon: 'Setting' } },
     { path: '/reports', name: 'Reports', component: Reports, meta: { title: '复盘报告', icon: 'Document' } },
+    { path: '/chains', name: 'ChainManager', component: ChainManager, meta: { title: '产业链配置', icon: 'Connection' } },
+    { path: '/knowledge-graph', name: 'KnowledgeGraph', component: KnowledgeGraph, meta: { title: '知识库', icon: 'Cpu' } },
 ]
 
 const router = createRouter({

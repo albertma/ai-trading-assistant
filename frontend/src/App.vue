@@ -55,6 +55,14 @@
                     <el-icon><Setting /></el-icon>
                     <span>风控规则</span>
                 </el-menu-item>
+                <el-menu-item index="/chains">
+                    <el-icon><Connection /></el-icon>
+                    <span>产业链配置</span>
+                </el-menu-item>
+                <el-menu-item index="/knowledge-graph">
+                    <el-icon><Cpu /></el-icon>
+                    <span>知识库</span>
+                </el-menu-item>
             </el-menu>
         </el-aside>
 

@@ -74,6 +74,32 @@ export function getContradiction(code) {
     return api.get(`/fundamental/${code}/contradiction`)
 }
 
+// ========== 产业链管理 ==========
+export function listIndustryChains() {
+    return api.get('/fundamental/chain-admin')
+}
+export function getIndustryChain(industry) {
+    return api.get(`/fundamental/chain-admin/${encodeURIComponent(industry)}`)
+}
+export function saveIndustryChain(industry, chainData, notes = '') {
+    return api.post(`/fundamental/chain-admin/${encodeURIComponent(industry)}`, { chain_data: chainData, notes })
+}
+export function deleteIndustryChain(industry) {
+    return api.delete(`/fundamental/chain-admin/${encodeURIComponent(industry)}`)
+}
+export function listConceptBoards() {
+    return api.get('/fundamental/chain-admin/concept-boards')
+}
+export function listUnmappedIndustries() {
+    return api.get('/fundamental/chain-admin/industries/unmapped')
+}
+export function extractChainFromArticle(data) {
+    return api.post('/fundamental/chain-admin/extract', data)
+}
+export function saveExtractedChain(data) {
+    return api.post('/fundamental/chain-admin/extract/save', data)
+}
+
 // ========== 档案 ==========
 export function getStockProfile(code) {
     return api.get(`/profile/${code}`)
