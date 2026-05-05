@@ -26,7 +26,18 @@
                         📅 {{ dataDate }}
                     </el-tag>
                 </el-col>
-                <el-col :span="12" style="text-align:right;">
+                <el-col :span="2" v-if="sessionsAvailable.length > 1">
+                    <el-radio-group v-model="dataSession" size="small" @change="onSessionChange">
+                        <el-radio-button value="noon">午市</el-radio-button>
+                        <el-radio-button value="close">收盘</el-radio-button>
+                    </el-radio-group>
+                </el-col>
+                <el-col :span="2" v-else>
+                    <el-tag v-if="dataDate" :type="dataSession === 'noon' ? 'warning' : 'success'" size="small">
+                        {{ dataSession === 'noon' ? '🌤 午市' : '🌙 收盘' }}
+                    </el-tag>
+                </el-col>
+                <el-col :span="8" style="text-align:right;">
                     <el-tag v-if="dataDate" :type="marketSentiment.type" effect="dark" size="large">
                         {{ marketSentiment.text }}
                     </el-tag>
@@ -166,7 +177,10 @@ const loading = ref(true)
 const noData = ref(false)
 const noDataMsg = ref('')
 const dataDate = ref('')
+const dataSession = ref('close')
+const sessionsAvailable = ref(['close'])
 const availableDates = ref([])
+const sessionsByDate = ref({})
 
 // 日期选择
 const selectedDate = ref(null)
@@ -238,13 +252,18 @@ async function loadData(dateStr) {
     loading.value = true
     noData.value = false
     try {
-        const { data } = await getMarketOverview(dateStr || undefined)
+        const params = {}
+        if (dateStr) params.date = dateStr
+        if (dataSession.value) params.session = dataSession.value
+        const { data } = await getMarketOverview(params)
         if (data.status === 'no_data') {
             noData.value = true
             noDataMsg.value = data.message || '暂无行情数据'
             return
         }
         dataDate.value = data.date
+        dataSession.value = data.session || 'close'
+        sessionsAvailable.value = data.sessions_available || []
         const s = data.summary
         statCards.value = [
             { label: '上涨家数', value: s.up, color: '#f56c6c', cls: 'stat-up' },
@@ -265,12 +284,23 @@ async function loadData(dateStr) {
     }
 }
 
+function onSessionChange(val) {
+    loadData(dataDate.value)
+}
+
 onMounted(async () => {
     // 先获取可选日期列表
     try {
         const { data } = await getMarketDates()
         availableDates.value = data.dates || []
+        sessionsByDate.value = data.sessions_by_date || {}
         selectedDate.value = data.latest || null
+        // 设置默认session
+        if (data.latest_sessions?.length) {
+            const s = data.latest_sessions
+            dataSession.value = s.includes('close') ? 'close' : s[0]
+            sessionsAvailable.value = s
+        }
     } catch (e) {
         console.error(e)
     }

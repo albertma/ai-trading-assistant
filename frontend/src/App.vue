@@ -15,10 +15,18 @@
                 text-color="#ffffffb3"
                 active-text-color="#fff"
             >
-                <el-menu-item index="/">
-                    <el-icon><DataAnalysis /></el-icon>
-                    <span>市场概览</span>
-                </el-menu-item>
+                <el-sub-menu index="dashboard-group">
+                    <template #title>
+                        <el-icon><DataAnalysis /></el-icon>
+                        <span>市场概览</span>
+                    </template>
+                    <el-menu-item index="/">
+                        <span>📊 大盘行情</span>
+                    </el-menu-item>
+                    <el-menu-item index="/reports">
+                        <span>📋 复盘报告</span>
+                    </el-menu-item>
+                </el-sub-menu>
                 <el-menu-item index="/watchlist">
                     <el-icon><View /></el-icon>
                     <span>观察池</span>
@@ -46,10 +54,6 @@
                 <el-menu-item index="/risk-rules">
                     <el-icon><Setting /></el-icon>
                     <span>风控规则</span>
-                </el-menu-item>
-                <el-menu-item index="/reports">
-                    <el-icon><Document /></el-icon>
-                    <span>复盘报告</span>
                 </el-menu-item>
             </el-menu>
         </el-aside>

@@ -6,8 +6,7 @@ const api = axios.create({
 })
 
 // ========== 市场 ==========
-export function getMarketOverview(date) {
-    const params = date ? { date } : {}
+export function getMarketOverview(params = {}) {
     return api.get('/market/overview', { params })
 }
 

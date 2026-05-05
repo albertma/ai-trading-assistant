@@ -12,24 +12,49 @@ from backend.config import MARKET_DATA_DIR
 router = APIRouter()
 
 
-def _find_csv(date_str: str | None = None) -> tuple[Path | None, str]:
-    """查找指定日期或最近的行情CSV"""
-    if date_str:
+def _find_csv(date_str: str | None = None, session: str | None = None) -> tuple[Path | None, str, str]:
+    """查找指定日期或最近的行情CSV
+    session: 'close' (终盘/默认) | 'noon' (午市)
+    返回 (path, date_str, actual_session)
+    """
+    def _lookup(d_str, s):
+        sfx = '_noon' if s == 'noon' else ''
         for prefix in ["沪深京A股", "沪深重要指数"]:
-            path = MARKET_DATA_DIR / f"{prefix}{date_str}.csv"
+            path = MARKET_DATA_DIR / f"{prefix}{d_str}{sfx}.csv"
             if path.exists():
-                return path, date_str
-        return None, date_str
+                return path
+        return None
 
+    if date_str:
+        # 指定session → 精确匹配
+        if session:
+            path = _lookup(date_str, session)
+            if path:
+                return path, date_str, session
+            # 指定session没找到，尝试另一个作为fallback
+            fallback = 'close' if session == 'noon' else 'noon'
+            path = _lookup(date_str, fallback)
+            if path:
+                return path, date_str, fallback
+            return None, date_str, session
+        # 未指定session → 优先close，其次noon
+        for s in ['close', 'noon']:
+            path = _lookup(date_str, s)
+            if path:
+                return path, date_str, s
+        return None, date_str, 'close'
+
+    # 自动找最近
     today = date.today()
+    sessions_to_try = [session] if session else ['close', 'noon']
     for i in range(10):
         d = today - timedelta(days=i)
         d_str = d.isoformat()
-        for prefix in ["沪深京A股", "沪深重要指数"]:
-            path = MARKET_DATA_DIR / f"{prefix}{d_str}.csv"
-            if path.exists():
-                return path, d_str
-    return None, ""
+        for s in sessions_to_try:
+            path = _lookup(d_str, s)
+            if path:
+                return path, d_str, s
+    return None, "", 'close'
 
 
 def _clean_numeric(val) -> float | None:
@@ -49,9 +74,9 @@ def _clean_numeric(val) -> float | None:
         return None
 
 
-def _load_csv(date_str: str | None = None) -> pd.DataFrame | None:
+def _load_csv(date_str: str | None = None, session: str | None = None) -> pd.DataFrame | None:
     """读取CSV (已清洗)，指定日期或取最近"""
-    path, d_str = _find_csv(date_str)
+    path, d_str, actual_session = _find_csv(date_str, session)
     if path is None:
         return None
 
@@ -76,35 +101,66 @@ def _load_csv(date_str: str | None = None) -> pd.DataFrame | None:
         if col in df.columns:
             df[col] = df[col].apply(_clean_numeric)
     df["_date"] = d_str
+    df["_session"] = actual_session
     return df
+
+
+def _list_available() -> list[dict]:
+    """返回日期列表，每个日期标注有哪些session可用"""
+    from collections import defaultdict
+    sessions_by_date = defaultdict(list)
+    for f in sorted(MARKET_DATA_DIR.glob("沪深京A股*.csv"), reverse=True):
+        stem = f.stem.replace("沪深京A股", "")
+        if stem.endswith("_noon"):
+            d = stem.replace("_noon", "")
+            sessions_by_date[d].append("noon")
+        else:
+            sessions_by_date[d] = ["close"] + [s for s in sessions_by_date.get(stem, []) if s != "close"]
+
+    result = []
+    for d, sessions in sorted(sessions_by_date.items(), reverse=True):
+        has_close = "close" in sessions
+        has_noon = "noon" in sessions
+        if has_close and has_noon:
+            result.append({"date": d, "sessions": ["noon", "close"]})
+        elif has_close:
+            result.append({"date": d, "sessions": ["close"]})
+        else:
+            result.append({"date": d, "sessions": ["noon"]})
+    return result
 
 
 @router.get("/dates")
 def available_dates():
-    """返回有数据的日期列表（按倒序）"""
-    dates = set()
-    for f in sorted(MARKET_DATA_DIR.glob("沪深京A股*.csv"), reverse=True):
-        d = f.stem.replace("沪深京A股", "")
-        dates.add(d)
+    """返回有数据的日期列表"""
+    dates = _list_available()
+    latest = dates[0] if dates else None
     return {
-        "dates": sorted(dates, reverse=True),
-        "latest": sorted(dates, reverse=True)[0] if dates else None,
+        "dates": [d["date"] for d in dates],
+        "sessions_by_date": {d["date"]: d["sessions"] for d in dates},
+        "latest": latest["date"] if latest else None,
+        "latest_sessions": latest["sessions"] if latest else [],
     }
 
 
 @router.get("/overview")
-def market_overview(date: str = Query(None, description="日期 YYYY-MM-DD，不传则取最近")):
+def market_overview(
+    date: str = Query(None, description="日期 YYYY-MM-DD，不传则取最近"),
+    session: str = Query(None, description="noon=午市, close=终盘, 不传自动选"),
+):
     """市场概览：涨跌统计、热门板块、TOP榜"""
-    df = _load_csv(date)
+    df = _load_csv(date, session)
     if df is None:
         return {
             "date": date or str(date.today()),
+            "session": session or "close",
             "status": "no_data",
             "message": f"{date or '最近'} 无行情数据",
         }
 
     valid = df[df["change_pct"].notna()]
     data_date = str(next(iter(df["_date"]), ""))
+    data_session = str(next(iter(df["_session"]), "close"))
 
     up_count = int((valid["change_pct"] > 0).sum())
     down_count = int((valid["change_pct"] < 0).sum())
@@ -151,8 +207,14 @@ def market_overview(date: str = Query(None, description="日期 YYYY-MM-DD，不
     for _, r in sorted_down.iterrows():
         top_losers.append({"code": r.get("code",""), "name": r.get("name",""), "change_pct": r.get("change_pct")})
 
+    # 当前日期的可用session
+    dates_info = _list_available()
+    sessions_map = {d["date"]: d["sessions"] for d in dates_info}
+
     return {
         "date": data_date,
+        "session": data_session,
+        "sessions_available": sessions_map.get(data_date, []),
         "status": "ok",
         "summary": {
             "total_stocks": int(len(valid)),
@@ -171,9 +233,12 @@ def market_overview(date: str = Query(None, description="日期 YYYY-MM-DD，不
 
 
 @router.get("/sectors")
-def sector_list(date: str = Query(None, description="日期 YYYY-MM-DD，不传则取最近")):
+def sector_list(
+    date: str = Query(None, description="日期 YYYY-MM-DD，不传则取最近"),
+    session: str = Query(None, description="noon=午市, close=终盘"),
+):
     """全部行业板块涨跌排名"""
-    df = _load_csv(date)
+    df = _load_csv(date, session)
     if df is None or "sector" not in df.columns:
         raise HTTPException(404, "行业数据不可用")
 
@@ -189,6 +254,7 @@ def sector_list(date: str = Query(None, description="日期 YYYY-MM-DD，不传�
     )
     return {
         "date": str(next(iter(df["_date"]), "")),
+        "session": str(next(iter(df["_session"]), "close")),
         "sectors": [
             {
                 "name": idx,

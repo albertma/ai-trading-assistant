@@ -1538,16 +1538,24 @@ const refTags = computed(() => [
     { key: 'industry', label: '#行业前瞻', available: !!cycleAnalysis.value },
 ])
 
-function insertAnalysisRef(tag) {
+async function insertAnalysisRef(tag) {
     const t = result.value?.technical
     const tech = t ? `技术面：现价${t.current_price}，涨幅${t.change_pct}%，MA5=${t.ma5} MA10=${t.ma10} MA20=${t.ma20} MA60=${t.ma60} MA200=${t.ma200}，RSI=${t.rsi_14}，均线${t.bullish_alignment ? '多头' : '空头'}` : ''
     const patterns = t?.kline_patterns?.length ? `K线形态：${t.kline_patterns.map(p => `${p.pattern}(${p.direction === 'bullish' ? '看涨' : '看跌'})`).join('、')}` : ''
-    // K线截图（如果有图表实例）
+    // K线截图：优先用已有图表实例，没有则离屏渲染
     let klineImg = ''
-    if (tag === 'kline' && klineChartInstance) {
+    if (tag === 'kline') {
         try {
-            const dataUrl = klineChartInstance.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#1a1a2e' })
-            klineImg = `<img src="${dataUrl}" style="max-width:100%;border-radius:6px;margin-top:6px;" alt="K线图" />`
+            let dataUrl = null
+            if (klineChartInstance) {
+                dataUrl = klineChartInstance.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#1a1a2e' })
+            } else {
+                // 离屏截图：请求K线数据 → 创建临时图表 → 截图 → 销毁
+                dataUrl = await captureKlineOffscreen(result.value?.code)
+            }
+            if (dataUrl) {
+                klineImg = `<img src="${dataUrl}" style="max-width:100%;border-radius:6px;margin-top:6px;" alt="K线图" />`
+            }
         } catch (e) { console.error('K线截图失败', e) }
     }
     const fund = fundData.value?.financial_summary?.records
@@ -1569,6 +1577,104 @@ function insertAnalysisRef(tag) {
     if (!text) return
     const prefix = draftNotes.value ? '\n\n' : ''
     draftNotes.value += prefix + text
+}
+
+/** 离屏渲染K线截图（当图表Tab未激活时使用） */
+async function captureKlineOffscreen(code) {
+    if (!code) return null
+    try {
+        const resp = await getLocalKline(code, 200)
+        const recs = (resp.data?.records || [])
+        if (recs.length < 20) return null
+
+        const dates = recs.map(r => r.date.slice(5, 10))
+        const opens = recs.map(r => r.open)
+        const closes = recs.map(r => r.close)
+        const highs = recs.map(r => r.high)
+        const lows = recs.map(r => r.low)
+        const vols = recs.map(r => r.volume)
+
+        // 计算MA
+        function calcSMA(data, period) {
+            const result = []
+            for (let i = 0; i < data.length; i++) {
+                if (i < period - 1) { result.push(NaN); continue }
+                let sum = 0
+                for (let j = i - period + 1; j <= i; j++) sum += data[j]
+                result.push(+(sum / period).toFixed(2))
+            }
+            return result
+        }
+        function calcEMA(data, period) {
+            const k = 2 / (period + 1); const result = []; let ema = data[0]
+            for (let i = 0; i < data.length; i++) { ema = i === 0 ? data[i] : data[i] * k + ema * (1 - k); result.push(+(ema).toFixed(4)) }
+            return result
+        }
+        function calcMACD(close) {
+            const dif = calcEMA(close, 12); const dea = []; let ema_dea = dif[0]; const k_dea = 2 / 10
+            for (let i = 0; i < dif.length; i++) { ema_dea = i === 0 ? dif[i] : dif[i] * k_dea + ema_dea * (1 - k_dea); dea.push(+(ema_dea).toFixed(4)) }
+            return { dif, dea, macd: dif.map((d, i) => +((d - dea[i]) * 2).toFixed(4)) }
+        }
+
+        const ma5 = calcSMA(closes, 5)
+        const ma10 = calcSMA(closes, 10)
+        const ma20 = calcSMA(closes, 20)
+        const ma30 = calcSMA(closes, 30)
+        const ma60 = calcSMA(closes, 60)
+        const { dif, dea, macd } = calcMACD(closes)
+
+        const candlestickData = recs.map(r => [+r.open, +r.close, +r.low, +r.high])
+        const macdBarData = macd.map(v => ({ value: +v.toFixed(4), itemStyle: { color: v >= 0 ? '#f56c6c' : '#67c23a' } }))
+
+        const option = {
+            backgroundColor: '#1a1a2e',
+            animation: false,
+            grid: [
+                { left: '6%', right: '3%', top: '4%', height: '58%' },
+                { left: '6%', right: '3%', top: '72%', height: '18%' },
+            ],
+            xAxis: [
+                { type: 'category', data: dates, gridIndex: 0, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false } },
+                { type: 'category', data: dates, gridIndex: 1, axisLabel: { color: '#888', fontSize: 10 }, axisLine: { lineStyle: { color: '#334' } } },
+            ],
+            yAxis: [
+                { type: 'value', gridIndex: 0, scale: true, splitLine: { lineStyle: { color: '#223', type: 'dashed' } }, axisLabel: { color: '#888', fontSize: 10 } },
+                { type: 'value', gridIndex: 1, scale: true, splitLine: { show: false }, axisLabel: { color: '#888', fontSize: 9 } },
+            ],
+            series: [
+                { name: 'K线', type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0, data: candlestickData, itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' } },
+                { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: recs.map(r => ({ value: r.volume, itemStyle: { color: r.close >= r.open ? '#f56c6c' : '#67c23a' } })) },
+                { name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#e6a23c', data: ma5, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#e6a23c' } },
+                { name: 'MA10', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#409eff', data: ma10, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#409eff' } },
+                { name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#b37feb', data: ma20, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#b37feb' } },
+                { name: 'MA30', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#5cdbd3', data: ma30, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#5cdbd3' } },
+                { name: 'MA60', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#ff85c0', data: ma60, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#ff85c0' } },
+                { name: 'MACD', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: macdBarData },
+                { name: 'DIF', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: dif, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#fff' } },
+                { name: 'DEA', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: dea, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#ffd666' } },
+            ],
+        }
+
+        // 创建离屏容器 → 初始化echarts → 截图 → 销毁
+        const container = document.createElement('div')
+        container.style.width = '800px'
+        container.style.height = '600px'
+        container.style.position = 'absolute'
+        container.style.left = '-9999px'
+        container.style.top = '-9999px'
+        document.body.appendChild(container)
+        const chart = echarts.init(container, null, { width: 800, height: 600, renderer: 'canvas' })
+        chart.setOption(option)
+        // 等渲染完成
+        await new Promise(r => setTimeout(r, 100))
+        const url = chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#1a1a2e' })
+        chart.dispose()
+        document.body.removeChild(container)
+        return url
+    } catch (e) {
+        console.error('离屏截图失败', e)
+        return null
+    }
 }
 
 async function loadKlineChart() {
