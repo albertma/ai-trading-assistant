@@ -115,7 +115,9 @@ def _list_available() -> list[dict]:
             d = stem.replace("_noon", "")
             sessions_by_date[d].append("noon")
         else:
-            sessions_by_date[d] = ["close"] + [s for s in sessions_by_date.get(stem, []) if s != "close"]
+            d = stem
+            if "close" not in sessions_by_date[d]:
+                sessions_by_date[d].insert(0, "close")
 
     result = []
     for d, sessions in sorted(sessions_by_date.items(), reverse=True):
