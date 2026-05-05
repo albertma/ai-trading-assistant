@@ -19,6 +19,7 @@ def _init_db():
             title TEXT NOT NULL DEFAULT '',
             source TEXT DEFAULT 'text',
             content TEXT NOT NULL,
+            summary TEXT DEFAULT '',
             entities TEXT DEFAULT '[]',
             relations TEXT DEFAULT '[]',
             created_at TEXT DEFAULT (datetime('now','localtime')),
@@ -39,6 +40,16 @@ def _init_db():
             PRIMARY KEY (source, target, relation)
         );
     """)
+    # 兼容旧表: 如果 entity_type 列不存在则添加
+    try:
+        c.execute("ALTER TABLE kg_entity_stats ADD COLUMN entity_type TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # 已经存在
+    # 兼容旧表: 如果 summary 列不存在则添加
+    try:
+        c.execute("ALTER TABLE kg_articles ADD COLUMN summary TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
@@ -467,6 +478,122 @@ def _extract_relations(text: str, entities: list[dict]) -> list[dict]:
 
     return relations
 
+# ─── 文章摘要生成（投资者视角）──────────────────────────────
+def _generate_summary(content: str, entities: list[dict], relations: list[dict]) -> str:
+    """从文章内容、实体和关系中生成投资视角的结构化摘要"""
+    parts = []
+    from collections import defaultdict
+
+    # 辅助：提取前N个有意义的非标题行
+    def _first_n_lines(n=3):
+        lines = []
+        for line in content.split('\n'):
+            line = line.strip()
+            if line and not line.startswith('#') and not line.startswith('*') and len(line) > 15:
+                lines.append(line)
+                if len(lines) >= n:
+                    break
+        return lines
+
+    companies = [e for e in entities if e["entity_type"] == "company"]
+    products = [e["name"] for e in entities if e["entity_type"] == "product"]
+    concepts = [e["name"] for e in entities if e["entity_type"] == "concept"]
+    links = [e["name"] for e in entities if e["entity_type"] == "industry_link"]
+    headers = [re.sub(r'^#+\s*', '', l).strip() for l in content.split('\n') if re.match(r'^#{1,3}\s+', l)]
+
+    # --- 1. 行业/赛道判断 ---
+    industry_set = set()
+    for e in entities:
+        ind = e.get("attributes", {}).get("industry", "")
+        if ind and ind != "--":
+            industry_set.add(ind)
+    industry_str = "、".join(sorted(industry_set)[:5]) if industry_set else "待识别"
+    stage_phrases = [h for h in headers if any(kw in h for kw in ["上游","中游","下游","景气","周期","拐点"])]
+    stage_hint = f"（{'; '.join(stage_phrases[:3])}）" if stage_phrases else ""
+    parts.append(f"**行业/赛道**: {industry_str} {stage_hint}")
+
+    # --- 2. 核心逻辑（从前3行有意义的正文提取） ---
+    first_lines = _first_n_lines(2)
+    if first_lines:
+        logic = first_lines[0][:120]
+        parts.append(f"**核心逻辑**: {logic}")
+    elif headers:
+        parts.append(f"**核心逻辑**: 围绕「{' | '.join(headers[:3])}」展开")
+
+    # --- 3. 产业链关键环节（按价值量/稀缺性排序：产品 > 环节 > 概念） ---
+    chain_items = []
+    # 高价值产品优先
+    for p in products:
+        chain_items.append(f"📦 {p}")
+    # 产业链环节
+    for l in links[:5]:
+        chain_items.append(f"🔗 {l}")
+    # 概念
+    for c in concepts[:5]:
+        chain_items.append(f"🏷️ {c}")
+    if chain_items:
+        parts.append(f"**关键环节**: {' | '.join(chain_items[:8])}")
+
+    # --- 4. 竞争格局（company按行业分组，标注地位） ---
+    if companies:
+        by_ind = defaultdict(list)
+        for e in entities:
+            if e["entity_type"] == "company":
+                ind = e.get("attributes", {}).get("industry", e.get("category", ""))
+                by_ind[ind].append(e["name"])
+        comp_lines = []
+        for ind, names in sorted(by_ind.items()):
+            if ind and names:
+                comp_lines.append(f"{ind}: {'、'.join(names[:4])}")
+        if comp_lines:
+            parts.append(f"**竞争格局**: {'; '.join(comp_lines[:5])}")
+
+    # --- 5. 核心标的（从属于/主营产品关系定位） ---
+    key_rels = [r for r in relations if r["relation"] in ("属于行业", "主营产品", "属于概念")]
+    if key_rels:
+        # 按source分组
+        by_source = defaultdict(list)
+        for r in key_rels:
+            by_source[r["source"]].append(f"{r['target']}[{r['relation']}]")
+        pick_lines = []
+        for src, targets in sorted(by_source.items()):
+            pick_lines.append(f"{src}: {', '.join(targets[:3])}")
+        if pick_lines:
+            parts.append(f"**核心标的**: {'; '.join(pick_lines[:6])}")
+    elif companies:
+        parts.append(f"**核心标的**: {'、'.join([e['name'] for e in companies[:6]])}")
+
+    # --- 6. 风险关注（从内容中识别风险关键词） ---
+    risk_kws = ["风险", "不确定性", "竞争加剧", "价格战", "下行", "过剩", "政策", "制裁",
+                "波动", "依赖", "瓶颈", "替代", "降价", "亏损", "下滑", "放缓"]
+    risks = []
+    for line in content.split('\n'):
+        for kw in risk_kws:
+            if kw in line and len(line) > 10 and line not in risks:
+                risks.append(line.strip()[:80])
+                break
+    if risks:
+        parts.append(f"**风险关注**: {'; '.join(risks[:3])}")
+    else:
+        parts.append("**风险关注**: 文章未明确提及风险，需自行判断")
+
+    # --- 7. 催化剂（从内容中识别驱动因素） ---
+    driver_kws = ["量产", "落地", "大单", "招标", "政策支持", "补贴",
+                  "突破", "获批", "上线", "合作", "投资", "扩张", "签约"]
+    drivers = []
+    for line in content.split('\n'):
+        for kw in driver_kws:
+            if kw in line and len(line) > 10:
+                drivers.append(line.strip()[:80])
+                break
+    if drivers:
+        parts.append(f"**催化剂**: {'; '.join(drivers[:3])}")
+    elif first_lines:
+        parts.append(f"**催化剂**: {first_lines[-1][:80] if len(first_lines)>1 else first_lines[0][:80]}")
+
+    return '\n'.join(parts)
+
+
 # ─── API 端点 ────────────────────────────────────────────
 @router.post("/extract")
 def extract_from_article(body: dict):
@@ -512,8 +639,11 @@ def extract_from_article(body: dict):
         if not title:
             title = content[:40].strip() + "..."
 
+    summary = _generate_summary(content, unique_e, unique_r)
+
     return {"success": True, "data": {
-        "title": title, "entities": unique_e, "relations": unique_r,
+        "title": title, "summary": summary,
+        "entities": unique_e, "relations": unique_r,
         "entity_count": len(unique_e), "relation_count": len(unique_r),
         "content_preview": content[:500] + ("..." if len(content) > 500 else ""),
     }}
@@ -524,14 +654,21 @@ def save_article(body: dict):
     title = body.get("title", "").strip()
     source = body.get("source", "text")
     content = body.get("content", "")
+    summary = body.get("summary", "").strip()
     entities = json.dumps(body.get("entities", []), ensure_ascii=False)
     relations = json.dumps(body.get("relations", []), ensure_ascii=False)
     if not content:
         raise HTTPException(400, "内容不能为空")
+    # 如果没有提供摘要，自动生成
+    if not summary:
+        try:
+            summary = _generate_summary(content, json.loads(entities), json.loads(relations))
+        except Exception:
+            summary = ""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("INSERT INTO kg_articles (title, source, content, entities, relations) VALUES (?,?,?,?,?)",
-              (title, source, content, entities, relations))
+    c.execute("INSERT INTO kg_articles (title, source, content, summary, entities, relations) VALUES (?,?,?,?,?,?)",
+              (title, source, content, summary, entities, relations))
     aid = c.lastrowid
     for e in json.loads(entities):
         cat = e.get("category", "")
@@ -553,7 +690,7 @@ def save_article(body: dict):
 def list_articles():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT id, title, source, entities, relations, created_at FROM kg_articles ORDER BY created_at DESC")
+    c.execute("SELECT id, title, source, entities, relations, summary, created_at FROM kg_articles ORDER BY created_at DESC")
     articles = []
     for r in c.fetchall():
         try:
@@ -562,7 +699,8 @@ def list_articles():
         except Exception:
             ec = rc = 0
         articles.append({"id": r[0], "title": r[1], "source": r[2],
-                         "entity_count": ec, "relation_count": rc, "created_at": r[5]})
+                         "entity_count": ec, "relation_count": rc,
+                         "summary": r[5] or "", "created_at": r[6]})
     conn.close()
     return {"success": True, "data": articles, "total": len(articles)}
 
@@ -571,7 +709,7 @@ def list_articles():
 def get_article(aid: int):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT id, title, source, content, entities, relations, created_at FROM kg_articles WHERE id=?", (aid,))
+    c.execute("SELECT id, title, source, content, entities, relations, summary, created_at FROM kg_articles WHERE id=?", (aid,))
     r = c.fetchone()
     conn.close()
     if not r:
@@ -579,7 +717,8 @@ def get_article(aid: int):
     return {"success": True, "data": {
         "id": r[0], "title": r[1], "source": r[2],
         "content": r[3], "entities": json.loads(r[4] or "[]"),
-        "relations": json.loads(r[5] or "[]"), "created_at": r[6]
+        "relations": json.loads(r[5] or "[]"), "summary": r[6] or "",
+        "created_at": r[7]
     }}
 
 
@@ -594,6 +733,21 @@ def delete_article(aid: int):
     if not deleted:
         raise HTTPException(404, "文章不存在")
     return {"success": True, "msg": "🗑️ 已删除"}
+
+
+@router.put("/articles/{aid}/summary")
+def update_summary(aid: int, body: dict):
+    """更新文章摘要"""
+    summary = body.get("summary", "").strip()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE kg_articles SET summary=?, updated_at=datetime('now','localtime') WHERE id=?", (summary, aid))
+    conn.commit()
+    updated = c.rowcount
+    conn.close()
+    if not updated:
+        raise HTTPException(404, "文章不存在")
+    return {"success": True, "msg": "✅ 摘要已更新"}
 
 
 @router.get("/graph/aggregated")
