@@ -305,3 +305,142 @@ def detect_patterns(df: pd.DataFrame) -> list[dict]:
     priority = {"high": 0, "medium": 1, "low": 2}
     results.sort(key=lambda r: (priority.get(r["confidence"], 3), 0 if r["direction"] != "neutral" else 1))
     return results[:6]
+
+
+# ═══════════════════════════════════════════════════════════════
+# 杯柄形态（中长期价格结构）
+# ═══════════════════════════════════════════════════════════════
+
+def detect_cup_handle(df: pd.DataFrame) -> list[dict]:
+    """
+    检测杯柄形态（Cup & Handle）。
+    扫描最近250根K线，找最优的杯+柄价格结构。
+    返回格式与 detect_patterns 一致。
+    """
+    if df is None or len(df) < 60:
+        return []
+
+    close = df["close"].values
+    high = df["high"].values
+    low = df["low"].values
+    volume = df["volume"].values if "volume" in df.columns else None
+    n = len(df)
+
+    best_score = 0.0
+    best_result = None
+
+    min_len, max_len = 50, min(250, n)
+
+    for total_len in range(min_len, max_len, 10):
+        for start in range(0, max(1, n - total_len), 5):
+            end = start + total_len
+            if end > n:
+                continue
+
+            seg_h = high[start:end]
+            seg_l = low[start:end]
+
+            # 杯左沿（前半段最高）
+            left_rel = np.argmax(seg_h[:max(len(seg_h) // 2, 10)])
+            left_idx = start + left_rel
+            left_price = high[left_idx]
+
+            # 杯底（左沿之后最低）
+            after_left = low[left_idx:end]
+            if len(after_left) < 15:
+                continue
+            bottom_rel = np.argmin(after_left)
+            bottom_idx = left_idx + bottom_rel
+            bottom_price = low[bottom_idx]
+
+            cup_depth = (left_price - bottom_price) / left_price
+            if cup_depth < 0.08 or cup_depth > 0.70:
+                continue
+
+            # 杯右沿（杯底之后最高）
+            after_bottom = high[bottom_idx + 1 : end]
+            if len(after_bottom) < 8:
+                continue
+            right_rel = np.argmax(after_bottom)
+            right_idx = bottom_idx + 1 + right_rel
+            right_price = high[right_idx]
+            if right_price < left_price * 0.75:
+                continue
+
+            # U型对称度
+            if bottom_rel > 10 and (len(after_bottom) - right_rel) > 10:
+                left_slope = (left_price - bottom_price) / max(1, bottom_rel)
+                right_slope = (right_price - bottom_price) / max(1, right_idx - bottom_idx)
+                symmetry = 1 - min(
+                    abs(left_slope - right_slope) / max(left_slope, right_slope, 0.01), 1
+                )
+            else:
+                symmetry = 0.3
+
+            # 柄（右沿之后的小回调）
+            after_right = close[right_idx + 1 :]
+            if len(after_right) < 3:
+                continue
+            handle_min_rel = np.argmin(after_right)
+            handle_min_idx = right_idx + 1 + handle_min_rel
+            handle_min_price = min(close[right_idx : handle_min_idx + 1])
+            handle_depth = (right_price - handle_min_price) / right_price
+            if handle_depth > 0.25 or handle_depth < 0.002:
+                continue
+
+            # 打分
+            depth_score = 1 - abs(cup_depth - 0.35) / 0.35
+            handle_score = 1 - handle_depth / 0.12
+            score = depth_score * 0.4 + symmetry * 0.35 + handle_score * 0.25
+
+            if score > best_score:
+                best_score = score
+                best_result = {
+                    "score": score,
+                    "left_idx": left_idx,
+                    "left_price": left_price,
+                    "bottom_idx": bottom_idx,
+                    "bottom_price": bottom_price,
+                    "cup_depth": cup_depth,
+                    "right_idx": right_idx,
+                    "right_price": right_price,
+                    "handle_idx": handle_min_idx,
+                    "handle_price": handle_min_price,
+                    "handle_depth": handle_depth,
+                }
+
+    if best_result and best_score > 0.25:
+        cd = best_result
+        depth_pct = round(cd["cup_depth"] * 100, 1)
+        handle_pct = round(cd["handle_depth"] * 100, 1)
+        close_current = close[-1]
+        pct_from_buy = round((close_current / cd["right_price"] - 1) * 100, 1)
+        buy_date = str(df["date"].iloc[cd["right_idx"]])[:10] if "date" in df.columns else "—"
+        bottom_date = str(df["date"].iloc[cd["bottom_idx"]])[:10] if "date" in df.columns else "—"
+
+        return [
+            {
+                "pattern": "杯柄形态（Cup & Handle）",
+                "direction": "bullish",
+                "confidence": "high" if best_score > 0.65 else "medium",
+                "description": (
+                    f"理想买点{buy_date} ¥{cd['right_price']:.2f}（突破柄部高点），"
+                    f"当前价{close_current:.2f}（距买点{pct_from_buy:+.1f}%），"
+                    f"杯深{depth_pct}%（{bottom_date}见底），柄深{handle_pct}%，"
+                    f"匹配度{round(best_score*100):.0f}%"
+                ),
+                "cup_handle_detail": {
+                    "score": round(best_score, 2),
+                    "buy_date": buy_date,
+                    "buy_point": cd["right_price"],
+                    "bottom_date": bottom_date,
+                    "bottom_price": cd["bottom_price"],
+                    "current_price": close_current,
+                    "pct_from_buy": pct_from_buy,
+                    "cup_depth": cd["cup_depth"],
+                    "handle_depth": cd["handle_depth"],
+                },
+            }
+        ]
+
+    return []

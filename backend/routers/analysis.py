@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from backend.config import MARKET_DATA_DIR, CACHE_DIR, CACHE_TTL_SECONDS
-from backend.patterns import detect_patterns
+from backend.patterns import detect_patterns, detect_cup_handle
 from backend.services.db_client import get_db
 from backend.services.market_service import get_daily_history, get_ma, get_stock_news
 from backend.services.financial_service import get_financial_reports
@@ -108,6 +108,9 @@ def analyze_stock(code: str):
 
         # K线形态识别
         kline_patterns = detect_patterns(df)
+        cup_handle = detect_cup_handle(df)
+        if cup_handle:
+            kline_patterns = cup_handle + kline_patterns
 
         tech_data = {
             "current_price": close,
@@ -184,6 +187,9 @@ def analyze_stock(code: str):
             patterns = []
             try:
                 patterns = detect_patterns(df) if df is not None else []
+                ch = detect_cup_handle(df) if df is not None else []
+                if ch:
+                    patterns = ch + patterns
             except:
                 pass
             from backend.services.db_client import evaluate_risk_rules

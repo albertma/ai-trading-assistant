@@ -148,6 +148,11 @@
                                     </el-tag>
                                 </div>
                                 <div class="pattern-desc">{{ p.description }}</div>
+                                <div v-if="p.cup_handle_detail" style="margin-top:8px;font-size:12px;color:#aaa;border-top:1px solid #333;padding-top:6px;">
+                                    <span>🪙 买点: {{ p.cup_handle_detail.buy_date }} ¥{{ p.cup_handle_detail.buy_point?.toFixed(2) }}</span>
+                                    <span style="margin-left:12px;">📉 杯底: {{ p.cup_handle_detail.bottom_date }} ¥{{ p.cup_handle_detail.bottom_price?.toFixed(2) }}</span>
+                                    <span style="margin-left:12px;">📊 现价: ¥{{ p.cup_handle_detail.current_price?.toFixed(2) }} ({{ p.cup_handle_detail.pct_from_buy > 0 ? '+' : '' }}{{ p.cup_handle_detail.pct_from_buy }}%)</span>
+                                </div>
                             </el-card>
                         </el-col>
                     </el-row>
