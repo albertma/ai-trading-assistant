@@ -166,7 +166,7 @@
                 <div v-if="fundLoading" style="text-align:center;padding:40px;"><el-icon class="is-loading" :size="32"><Loading /></el-icon></div>
                 <template v-else-if="fundData">
                     <el-card shadow="hover" style="margin-bottom:16px;">
-                        <template #header><b>📋 财务摘要（最近5期）</b></template>
+                        <template #header><b>📋 财务摘要（最近12期）</b></template>
                         <el-table :data="fundData.financial_summary?.records || []" border size="small" style="width:100%"
                             :default-sort="{ prop: '报告期', order: 'descending' }">
                             <el-table-column prop="报告期" label="报告期" width="110" sortable />
@@ -626,7 +626,7 @@
                         </div>
                     </el-card>
                     <el-card shadow="hover" style="margin-bottom:16px;">
-                        <template #header><b>📈 杜邦分解趋势（最近5期）</b></template>
+                        <template #header><b>📈 杜邦分解趋势（最近12期）</b></template>
                         <el-table :data="dupontData.dupont.rows" border size="small" style="width:100%"
                             :default-sort="{ prop: 'period', order: 'descending' }">
                             <el-table-column prop="period" label="报告期" width="110" sortable />

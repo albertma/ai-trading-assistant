@@ -373,8 +373,8 @@ def _get_dupont_analysis(code: str) -> dict | None:
     if not dupont_rows:
         return None
 
-    # 计算同比变化：最近5期的逐期变化
-    rows_for_changes = dupont_rows[-5:]
+    # 计算同比变化：最近12期的逐期变化
+    rows_for_changes = dupont_rows[-12:]
     changes = []
     for i in range(len(rows_for_changes) - 1, 0, -1):
         cur = rows_for_changes[i]
@@ -407,7 +407,7 @@ def _get_dupont_analysis(code: str) -> dict | None:
             })
 
     # 只取最近5期
-    dupont_rows = dupont_rows[-5:]
+    dupont_rows = dupont_rows[-12:]
 
     return {
         "rows": dupont_rows,
@@ -627,6 +627,134 @@ def _lookup_board(board_name: str, board_data: dict) -> dict | None:
     return None
 
 
+def _compute_board_from_stocks(board_name: str) -> dict | None:
+    """从个股行情聚合计算概念板块指标（兜底）
+    
+    双路兜底：
+    1. akshare获取成分股 → CSV查涨跌幅
+    2. CSV行业模糊匹配 → CSV查涨跌幅
+    """
+    from backend.config import MARKET_DATA_DIR
+    from datetime import date
+    try:
+        board_codes = set()
+        top_df = None
+        
+        # ① 尝试 akshare 获取成分股
+        try:
+            import akshare as ak
+            cons_df = ak.stock_board_concept_cons_em(symbol=board_name)
+            if cons_df is not None and not cons_df.empty:
+                for _, r in cons_df.iterrows():
+                    code = str(r.get("代码", "")).strip()
+                    if code:
+                        board_codes.add(code)
+                # akshare cons_em 的涨跌幅列名是"涨跌幅"
+                chg_col = "涨跌幅" if "涨跌幅" in cons_df.columns else ("涨幅" if "涨幅" in cons_df.columns else None)
+                if chg_col:
+                    top_df = cons_df.nlargest(3, chg_col) if not cons_df.empty else None
+        except Exception:
+            pass
+        
+        # 读CSV（一次读取，后续复用）
+        today = date.today()
+        csv_df = None
+        for i in range(5):
+            d = (today - timedelta(days=i)).isoformat()
+            fp = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
+            if fp.exists():
+                try:
+                    csv_df = pd.read_csv(fp, encoding="utf-16", sep="\t", engine="python")
+                    if "代码" in csv_df.columns:
+                        csv_df["代码"] = csv_df["代码"].astype(str).str.strip("'\"")
+                except Exception:
+                    pass
+                break
+        
+        if csv_df is None:
+            return None
+        
+        # ② CSV兜底：用行业模糊匹配（当akshare没拿到数据时）
+        if not board_codes and "所属行业" in csv_df.columns:
+            ind_matched = csv_df[csv_df["所属行业"].str.contains(board_name, na=False)]
+            if not ind_matched.empty:
+                board_codes = set(ind_matched["代码"].tolist())
+                # 涨幅列在CSV里叫"涨幅"不是"涨跌幅"
+                chg_col = "涨幅" if "涨幅" in csv_df.columns else "涨跌幅"
+                if chg_col in ind_matched.columns:
+                    ind_matched = ind_matched.copy()
+                    ind_matched["_chg"] = pd.to_numeric(
+                        ind_matched[chg_col].astype(str).str.replace("%", "", regex=False),
+                        errors="coerce"
+                    )
+                    top_df = ind_matched.sort_values("_chg", ascending=False)
+        
+        if not board_codes:
+            return None
+        
+        # 统一从CSV提取涨跌幅
+        matched = csv_df[csv_df["代码"].isin(board_codes)]
+        if matched.empty:
+            return None
+        
+        chg_col = "涨幅" if "涨幅" in csv_df.columns else "涨跌幅"
+        chgs = []
+        for _, r in matched.iterrows():
+            try:
+                raw = str(r.get(chg_col, "0")).replace("%", "").strip()
+                # 清理脚注标记 ①②③④
+                for ch in "①②③④⑤⑥⑦⑧⑨⑩":
+                    raw = raw.replace(ch, "")
+                raw = raw.strip()
+                chg = float(raw) if raw and raw not in ("--", "nan", "") else None
+                if chg is not None:
+                    chgs.append(chg)
+            except (ValueError, TypeError):
+                pass
+        
+        if not chgs:
+            return None
+        
+        avg_chg = round(sum(chgs) / len(chgs), 2)
+        up_count = sum(1 for c in chgs if c > 0)
+        down_count = sum(1 for c in chgs if c < 0)
+        
+        # 领涨股
+        leader = "--"
+        leader_chg = 0
+        if top_df is not None and not top_df.empty:
+            try:
+                first = top_df.iloc[0]
+                if "名称" in top_df.columns:
+                    leader = str(first.get("名称", "--"))
+                elif "股票名称" in top_df.columns:
+                    leader = str(first.get("股票名称", "--"))
+                else:
+                    leader = str(first.name) if hasattr(first, 'name') and first.name else "--"
+                # 尝试取涨幅
+                for col in ("_chg", "涨跌幅", "涨幅"):
+                    v = first.get(col)
+                    if v is not None:
+                        try:
+                            leader_chg = float(v)
+                            break
+                        except (ValueError, TypeError):
+                            pass
+            except Exception:
+                pass
+        
+        return {
+            "change_pct": avg_chg,
+            "up_count": up_count,
+            "down_count": down_count,
+            "leader": leader,
+            "leader_chg": round(leader_chg, 2),
+            "_fallback": True,
+        }
+    except Exception:
+        return None
+
+
 def _analyze_industry_cycle(sector: str, industry_data: dict | None) -> dict | None:
     """行业景气周期 + 供需矛盾分析 + 量化预测（结果按天缓存）"""
     if not industry_data:
@@ -684,14 +812,20 @@ def _analyze_industry_cycle(sector: str, industry_data: dict | None) -> dict | N
         
         for board in boards:
             info = _lookup_board(board, board_data)
+            # 兜底：板块数据不存在时从个股行情聚合计算
+            if not info:
+                info = _compute_board_from_stocks(board)
             if info:
-                up_ratio_b = info["up_count"] / max(info["up_count"] + info["down_count"], 1) * 100
+                up_count = info.get("up_count", 0)
+                down_count = info.get("down_count", 0)
+                up_ratio_b = up_count / max(up_count + down_count, 1) * 100
                 stage_items.append({
                     "name": board,
                     "change_pct": info["change_pct"],
                     "up_ratio": round(up_ratio_b, 1),
-                    "leader": info["leader"],
-                    "leader_chg": info["leader_chg"],
+                    "leader": info.get("leader", "--"),
+                    "leader_chg": info.get("leader_chg"),
+                    "_fallback": info.get("_fallback", False),
                 })
                 total_chg += info["change_pct"]
                 valid_boards += 1
@@ -1307,6 +1441,18 @@ def _get_contradiction_analysis(code: str) -> dict | None:
 
     industry = _get_industry_data(sector)
 
+    # 1d. 从本地CSV读取当日行情（供后续价格/涨幅/PE等使用）
+    csv_df = None
+    try:
+        csv_path = _find_latest_csv()
+        if csv_path:
+            _df = pd.read_csv(csv_path, encoding="utf-16", sep="\t", engine="python")
+            if "代码" in _df.columns:
+                _df["代码"] = _df["代码"].astype(str).str.strip("'\"")
+            csv_df = _df
+    except Exception:
+        csv_df = None
+
     def _flt(v):
         if v is None or (isinstance(v, float) and np.isnan(v)):
             return None
@@ -1909,7 +2055,6 @@ def _get_contradiction_analysis(code: str) -> dict | None:
             "trend": chg_trend,
             "desc": chg_trend_desc,
         } if chg_trend else None,
-        "behavioral_biases": behavioral_biases,
         "behavioral_biases": behavioral_biases,
         "recommended_models": _recommend_mental_models(
             code=code, name=name, sector=sector or "",
