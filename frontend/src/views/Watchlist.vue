@@ -100,7 +100,8 @@
                         <div v-if="stockHistory.length" class="scroll-area">
                             <div v-for="(rec, i) in stockHistory" :key="'h' + i"
                                 class="history-item"
-                                :class="{ 'history-active': detailHist?.code === rec.code && detailHist?.analysis_date === rec.analysis_date }">
+                                :class="{ 'history-active': detailHist?.code === rec.code && detailHist?.analysis_date === rec.analysis_date }"
+                                @click="goToHistoryAnalysis(rec)">
                                 <div class="history-header">
                                     <el-tag v-if="rec.record_type === 'draft'" size="mini" type="warning" effect="dark">草稿</el-tag>
                                     <el-tag v-else size="mini" type="primary" effect="dark">快照</el-tag>
@@ -408,6 +409,11 @@ async function handleRemove(code) {
 function goAnalysis() {
     if (!selected.value?.code) return
     router.push({ path: '/analysis', query: { code: selected.value.code } })
+}
+
+function goToHistoryAnalysis(rec) {
+    if (!rec?.code) return
+    router.push({ path: '/analysis', query: { code: rec.code } })
 }
 
 async function changePriority() {

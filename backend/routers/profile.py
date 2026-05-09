@@ -153,6 +153,20 @@ def stock_profile(code: str):
     return profile
 
 
+@router.post("/{code}/save-full-analysis")
+def save_full_analysis(code: str, data: dict):
+    """从分析页面保存全量分析数据到SQLite"""
+    from backend.services.db_client import save_analysis
+    try:
+        name = (data or {}).get("name", "")
+        sector = (data or {}).get("sector", "")
+        analysis_data = (data or {}).get("analysis_data", {})
+        ok = save_analysis(code, name, sector, analysis_data)
+        return {"status": "ok" if ok else "failed"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 @router.post("/{code}/note")
 def add_stock_note(code: str, data: dict):
     note = (data or {}).get("note", "").strip()

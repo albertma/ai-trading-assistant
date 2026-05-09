@@ -143,6 +143,10 @@ export function deleteDraft(code, analysisDate) {
     return api.delete(`/profile/${code}/draft/${analysisDate}`)
 }
 
+export function saveFullAnalysis(code, data) {
+    return api.post(`/profile/${code}/save-full-analysis`, data)
+}
+
 // ========== 风控 ==========
 export function getRiskAlerts() {
     return api.get('/risk/alerts')

@@ -171,15 +171,15 @@
                             :default-sort="{ prop: '报告期', order: 'descending' }">
                             <el-table-column prop="报告期" label="报告期" width="110" sortable />
                             <el-table-column prop="营业总收入" label="营收(亿)" width="90">
-                                <template #default="{ row }">{{ row?.['营业总收入'] ?? '--' }}</template>
+                                <template #default="{ row }">{{ row?.['营业总收入'] != null ? Number(row['营业总收入']).toFixed(2) : '--' }}</template>
                             </el-table-column>
                             <el-table-column prop="营业总收入同比增长率" label="营收同比" width="80">
                                 <template #default="{ row }">
-                                    <span :style="{ color: (Number(row?.['营业总收入同比增长率'])||0) >= 0 ? '#f56c6c' : '#67c23a' }">{{ row?.['营业总收入同比增长率'] ? row?.['营业总收入同比增长率']+'%' : '--' }}</span>
+                                    <span :style="{ color: (Number(row?.['营业总收入同比增长率'])||0) >= 0 ? '#f56c6c' : '#67c23a' }">{{ row?.['营业总收入同比增长率'] ? Number(row['营业总收入同比增长率']).toFixed(2)+'%' : '--' }}</span>
                                 </template>
                             </el-table-column>
                             <el-table-column prop="净利润" label="净利(亿)" width="85">
-                                <template #default="{ row }">{{ row?.['净利润'] ?? '--' }}</template>
+                                <template #default="{ row }">{{ row?.['净利润'] != null ? Number(row['净利润']).toFixed(2) : '--' }}</template>
                             </el-table-column>
                             <el-table-column prop="净利润同比增长率" label="净利同比" width="80">
                                 <template #default="{ row }">
@@ -219,6 +219,7 @@
                         <el-card shadow="hover" style="margin-bottom:16px;">
                             <template #header>
                                 <b>📄 三张财务报表</b>
+                                <el-tag size="small" type="info" effect="plain" style="margin-left:8px;">单位：亿元 (人民币)</el-tag>
                                 <el-button size="small" type="primary" plain style="float:right;" @click="statementsVisible = true">全屏查看</el-button>
                             </template>
                             <el-tabs type="border-card">
@@ -1317,6 +1318,9 @@
     <!-- 详细财报弹窗 -->
     <el-dialog v-model="statementsVisible" title="📄 三张财务报表" width="90%" top="5vh"
         :close-on-click-modal="false" @open="loadStatements">
+        <div style="margin-bottom:12px;">
+            <el-tag size="small" type="info" effect="plain">单位：亿元 (人民币)</el-tag>
+        </div>
         <div v-if="statementsLoading" style="text-align:center;padding:40px;">
             <el-icon class="is-loading" :size="32"><Loading /></el-icon>
             <p style="color:#909399;margin-top:8px;">加载财务报表...</p>
@@ -1407,7 +1411,7 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick, watch, onBeforeUnmount, inject } from 'vue'
-import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, clearChatHistory, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary, getExpenseAnalysis, getFinancialStatements, getComprehensiveAnalysis, getContradiction, saveSnapshot, deleteSnapshot, updateDraftNotes, listSnapshots } from '../api/index.js'
+import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, clearChatHistory, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary, getExpenseAnalysis, getFinancialStatements, getComprehensiveAnalysis, getContradiction, saveSnapshot, deleteSnapshot, updateDraftNotes, listSnapshots, saveFullAnalysis } from '../api/index.js'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import * as echarts from 'echarts'
@@ -1570,6 +1574,7 @@ async function loadComprehensiveData() {
         console.error('综合评估加载失败', e)
     } finally {
         comprehensiveLoading.value = false
+        saveCurrentAnalysis()
     }
 }
 async function loadContradictionData() {
@@ -1583,6 +1588,7 @@ async function loadContradictionData() {
         console.error('矛盾分析加载失败', e)
     } finally {
         contradictionLoading.value = false
+        saveCurrentAnalysis()
     }
 }
 const dupontData = ref(null)
@@ -1984,6 +1990,7 @@ async function loadDupontData() {
         console.error('杜邦分析加载失败', e)
     } finally {
         dupontLoading.value = false
+        saveCurrentAnalysis()
     }
 }
 
@@ -2145,6 +2152,8 @@ async function search() {
         // 并发加载基本面+档案
         loadFundamental(code)
         loadArchive(code)
+        // 首次分析后保存基础数据到SQLite
+        saveCurrentAnalysis()
     } catch (e) {
         ElMessage.error(e.response?.data?.detail || '分析失败')
     } finally {
@@ -2160,6 +2169,38 @@ async function checkWatchlist(code) {
         inWatchlist.value = (data.items || []).some(i => i.code === code)
     } catch {
         inWatchlist.value = false
+    }
+}
+
+// ===== 全量分析保存到SQLite =====
+async function saveCurrentAnalysis() {
+    const code = stockCode.value?.trim()
+    if (!code || !result.value) return
+    try {
+        const analysisData = {
+            technical: result.value.technical || {},
+            fundamental: result.value.fundamental || fundData.value || {},
+            risk_check: result.value.risk_check || result.value.custom_risk || {},
+            industry_outlook: fundData.value?.industry_outlook || {},
+            news: result.value.news || [],
+            kline_patterns: result.value.technical?.kline_patterns || [],
+        }
+        // 补充可选数据（如果已加载）
+        if (contradictionData.value) analysisData.contradiction = contradictionData.value
+        if (dupontData.value) analysisData.dupont = dupontData.value
+        if (comprehensiveData.value) analysisData.comprehensive = comprehensiveData.value
+        if (expenseData.value) analysisData.expense = expenseData.value
+        if (statementsData.value) analysisData.statements = statementsData.value
+
+        await saveFullAnalysis(code, {
+            name: result.value.name || '',
+            sector: result.value.sector || '',
+            analysis_data: analysisData,
+        })
+        console.log(`✅ 全量分析数据已保存 ${code}`)
+    } catch (e) {
+        // 静默失败，不阻塞用户体验
+        console.warn('全量分析保存失败', e)
     }
 }
 
@@ -2194,6 +2235,8 @@ async function loadFundamental(code) {
         statementsData.value = stmtResp.data
     } catch { /* statements 可选 */ }
     fundLoading.value = false
+    // 基本面加载完成后，再次保存（此时 industry_outlook 有了）
+    saveCurrentAnalysis()
 }
 
 async function loadArchive(code) {

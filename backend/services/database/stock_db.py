@@ -242,16 +242,42 @@ def init_db():
         conn.commit()
     except Exception:
         pass
+    # 迁移：分析全量数据JSON列
+    try:
+        conn.execute("ALTER TABLE stock_archive ADD COLUMN analysis_json TEXT DEFAULT ''")
+        conn.commit()
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE analysis_snapshots ADD COLUMN analysis_json TEXT DEFAULT ''")
+        conn.commit()
+    except Exception:
+        pass
     conn.close()
 
 def save_analysis(code: str, name: str, sector: str, data: dict) -> bool:
-    """保存/更新分析记录"""
+    """保存/更新分析记录（含全量JSON）"""
+    import json
     conn = get_db()
     try:
         tech = data.get("technical") or {}
         fund = data.get("fundamental") or {}
         risk = data.get("risk_check") or {}
         ind = data.get("industry_outlook") or {}
+
+        # 提取可JSON序列化的analysis_json（去掉非必要的大字段）
+        analysis_json = {}
+        try:
+            analysis_json = {
+                k: v for k, v in data.items()
+                if k in ('technical', 'fundamental', 'risk_check', 'industry_outlook',
+                         'comprehensive', 'contradiction', 'dupont', 'expense',
+                         'supply_chain', 'news', 'kline_patterns')
+            }
+            # 转成JSON字符串
+            json_str = json.dumps(analysis_json, ensure_ascii=False, default=str)
+        except Exception:
+            json_str = ''
 
         conn.execute("""
             INSERT OR REPLACE INTO stock_archive (
@@ -261,8 +287,9 @@ def save_analysis(code: str, name: str, sector: str, data: dict) -> bool:
                 rsi14, macd_dif, macd_dea, macd_hist,
                 bullish_alignment, risk_passed,
                 revenue, net_profit, gross_margin, roe,
-                industry_rank, industry_total, industry_avg_chg
-            ) VALUES (?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?,?, ?,?,?)
+                industry_rank, industry_total, industry_avg_chg,
+                analysis_json
+            ) VALUES (?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?,?, ?,?,?, ?)
         """, (
             code, name, sector, date.today().isoformat(),
             tech.get("current_price"), tech.get("change_pct"),
@@ -275,6 +302,7 @@ def save_analysis(code: str, name: str, sector: str, data: dict) -> bool:
             fund.get("revenue"), fund.get("net_profit"),
             fund.get("gross_margin"), fund.get("roe"),
             ind.get("rank"), ind.get("total_sectors"), ind.get("avg_change"),
+            json_str,
         ))
         conn.commit()
         return True
@@ -330,11 +358,23 @@ def get_stock_history(code: str) -> list:
 
 
 def save_snapshot(code: str, name: str, sector: str, data: dict, notes: str = '') -> int | None:
-    """保存分析快照（手动保存），返回快照ID"""
+    """保存分析快照（手动保存含全量JSON），返回快照ID"""
+    import json
     from datetime import date
     tech = data.get("technical") or {}
     fund = data.get("fundamental") or {}
     risk = data.get("risk_check") or {}
+    # 构建全量JSON
+    analysis_json = ''
+    try:
+        analysis_json = json.dumps({
+            k: v for k, v in data.items()
+            if k in ('technical', 'fundamental', 'risk_check', 'industry_outlook',
+                     'comprehensive', 'contradiction', 'dupont', 'expense',
+                     'supply_chain', 'news', 'kline_patterns')
+        }, ensure_ascii=False, default=str)
+    except Exception:
+        pass
     conn = get_db()
     try:
         cur = conn.execute("""INSERT INTO analysis_snapshots (
@@ -343,8 +383,9 @@ def save_snapshot(code: str, name: str, sector: str, data: dict, notes: str = ''
             ma5, ma10, ma20, ma60, ma200,
             rsi14, macd_dif, macd_dea, macd_hist,
             bullish_alignment, risk_passed,
-            revenue, net_profit, gross_margin, roe
-        ) VALUES (?,?,?,?,?, ?,?, ?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?,?)""", (
+            revenue, net_profit, gross_margin, roe,
+            analysis_json
+        ) VALUES (?,?,?,?,?, ?,?, ?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?,?, ?)""", (
             code, name, sector, date.today().isoformat(), notes,
             tech.get("current_price"), tech.get("change_pct"),
             tech.get("ma5"), tech.get("ma10"), tech.get("ma20"), tech.get("ma60"), tech.get("ma200"),
@@ -353,6 +394,7 @@ def save_snapshot(code: str, name: str, sector: str, data: dict, notes: str = ''
             1 if tech.get("bullish_alignment") else 0,
             1 if risk.get("passed") else 0,
             fund.get("revenue"), fund.get("net_profit"), fund.get("gross_margin"), fund.get("roe"),
+            analysis_json,
         ))
         conn.commit()
         return cur.lastrowid

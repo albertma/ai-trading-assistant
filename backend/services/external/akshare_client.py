@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 
 def _to_records(df: pd.DataFrame) -> list[dict]:
-    """DataFrame转为纯Python dict列表，清理numpy类型"""
+    """DataFrame转为纯Python dict列表，清理numpy类型，统一单位到亿"""
     records = []
     for _, r in df.iterrows():
         rec = {}
@@ -18,8 +18,28 @@ def _to_records(df: pd.DataFrame) -> list[dict]:
                 rec[col] = round(float(val), 4) if not pd.isna(val) else None
             elif isinstance(val, str):
                 v = val.strip()
-                v = v.replace("亿", "").replace("万", "").replace("%", "").strip()
-                rec[col] = v if v not in ("--", "", "False") else None
+                if v in ("--", "", "False"):
+                    rec[col] = None
+                else:
+                    # 判断并处理单位
+                    v_clean = v
+                    if v.endswith("亿"):
+                        v_clean = v[:-1].strip()
+                    elif v.endswith("万"):
+                        v_clean = v[:-1].strip()
+                    elif v.endswith("%"):
+                        v_clean = v[:-1].strip()
+                    else:
+                        v_clean = v
+
+                    # 尝试转数字
+                    try:
+                        num = float(v_clean)
+                        if v.endswith("万"):
+                            num = round(num / 10000, 4)  # 万→亿
+                        rec[col] = num
+                    except ValueError:
+                        rec[col] = v_clean if v_clean else None
             else:
                 rec[col] = val
         records.append(rec)
@@ -206,8 +226,8 @@ def get_expense_data(code: str) -> dict | None:
                            ("finance_expense", "财务费用")]:
             fv = first.get(key)
             lv = last.get(key)
-            if fv is not None and lv is not None:
-                rev_chg_pct = (last["revenue"] / first["revenue"] - 1) * 100
+            if fv is not None and lv is not None and fv != 0:
+                rev_chg_pct = (last["revenue"] / first["revenue"] - 1) * 100 if first.get("revenue") else 0
                 exp_chg_pct = (lv / fv - 1) * 100
                 if abs(exp_chg_pct - rev_chg_pct) > 20:
                     if exp_chg_pct > rev_chg_pct + 20:
