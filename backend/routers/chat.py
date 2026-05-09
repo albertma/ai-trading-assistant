@@ -9,7 +9,7 @@ from openai import OpenAI
 import json
 import yaml
 from pathlib import Path
-from backend.stock_db import save_chat_message, get_chat_history, save_ai_analysis, get_ai_analysis
+from backend.services.db_client import save_chat_message, get_chat_history, save_ai_analysis, get_ai_analysis
 
 router = APIRouter()
 
@@ -162,7 +162,7 @@ def get_stock_chat_history(code: str, limit: int = 50):
 @router.delete("/{code}/history")
 def clear_stock_chat_history(code: str):
     """清空某只股票的聊天记录"""
-    from backend.stock_db import get_db
+    from backend.services.db_client import get_db
     conn = get_db()
     conn.execute("DELETE FROM chat_history WHERE code = ?", (code,))
     conn.commit()
@@ -291,7 +291,7 @@ def get_stock_ai_analyses(code: str, limit: int = 5):
 @router.delete("/{code}/analyses")
 def clear_stock_ai_analyses(code: str):
     """清空某只股票的AI分析"""
-    from backend.stock_db import get_db
+    from backend.services.db_client import get_db
     conn = get_db()
     conn.execute("DELETE FROM ai_analysis WHERE code = ?", (code,))
     conn.commit()

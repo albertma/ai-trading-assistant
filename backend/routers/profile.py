@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from datetime import date, timedelta
 
 from backend.config import MARKET_DATA_DIR
-from backend.stock_db import save_analysis, get_history, get_all_history, get_stock_history, add_note, get_notes, get_chat_history, get_financial_reports, save_financial_reports, save_snapshot, delete_snapshot, delete_draft, get_snapshots, save_draft_notes, get_draft_notes
+from backend.services.db_client import save_analysis, get_history, get_all_history, get_stock_history, add_note, get_notes, get_chat_history, get_financial_reports, save_financial_reports, save_snapshot, delete_snapshot, delete_draft, get_snapshots, save_draft_notes, get_draft_notes
 from backend.routers.analysis import analyze_stock as _do_analysis
 from backend.routers.fundamental import fundamental_analysis as _do_fundamental
 
@@ -73,6 +73,19 @@ def stock_profile(code: str):
                         name = str(match.iloc[0].get("名称", ""))
                 break
 
+    # 缓存命中时 fund_data 为空，需要单独获取行业前瞻数据
+    if cached_reports and sector and not fund_data.get("industry_outlook"):
+        try:
+            from backend.routers.fundamental import _get_industry_data, _analyze_industry_cycle
+            ind_part = _get_industry_data(sector)
+            cycle_part = _analyze_industry_cycle(sector, ind_part)
+            if ind_part:
+                if cycle_part:
+                    ind_part["cycle_analysis"] = cycle_part
+                fund_data["industry_outlook"] = ind_part
+        except Exception:
+            pass
+
     t = tech_data.get("technical") or {}
     rc = tech_data.get("risk_check") or {}
     records = records_data
@@ -86,6 +99,7 @@ def stock_profile(code: str):
         "ma60": t.get("ma60"), "ma200": t.get("ma200"),
         "rsi14": t.get("rsi_14"), "macd": t.get("macd"),
         "bullish_alignment": t.get("bullish_alignment"),
+        "trend_status": t.get("trend_status", "空头"),
         "risk_passed": rc.get("passed"),
         "news": tech_data.get("news", []),
         "business": rev[0].get("business", "") if rev else "",

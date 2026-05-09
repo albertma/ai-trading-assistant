@@ -2,9 +2,11 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from backend.stock_db import (
+from backend.services.db_client import (
     get_watchlist, add_to_watchlist, remove_from_watchlist, update_watchlist
 )
+from backend.services.financial_service import get_financial_summary
+from backend.services.market_service import get_daily_history, get_ma
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
@@ -115,12 +117,11 @@ def watch_chart(code: str, days: int = 30):
 @router.get("/{code}/fundamental")
 def watch_fundamental(code: str):
     """获取基本面变化（财务历史）"""
-    import akshare as ak
     try:
-        df = ak.stock_financial_abstract_ths(symbol=code, indicator="按报告期")
-        if df is not None and not df.empty:
+        fin = get_financial_summary(code)
+        if fin and fin.get("records"):
             rows = []
-            for _, r in df.head(5).iterrows():
+            for r in fin["records"][:5]:
                 def v(key):
                     val = r.get(key, "--")
                     return str(val) if val is not None and str(val) != "nan" else "--"
@@ -144,7 +145,7 @@ def watch_fundamental(code: str):
 @router.post("/refresh-kline")
 def refresh_all_kline():
     """为所有观察池中的股票/ETF刷新K线数据（保留400条）"""
-    from backend.stock_db import get_watchlist, fetch_and_save_kline
+    from backend.services.db_client import get_watchlist, fetch_and_save_kline
     items = get_watchlist()
     results = []
     for item in items:
@@ -156,7 +157,7 @@ def refresh_all_kline():
 @router.post("/refresh-kline/{code}")
 def refresh_one_kline(code: str):
     """为指定股票/ETF刷新K线数据（保留400条）"""
-    from backend.stock_db import fetch_and_save_kline, prune_kline
+    from backend.services.db_client import fetch_and_save_kline, prune_kline
     ok, saved = fetch_and_save_kline(code)
     pruned = prune_kline(code)
     return {"code": code, "ok": ok, "saved": saved, "pruned": pruned}
@@ -165,7 +166,7 @@ def refresh_one_kline(code: str):
 @router.get("/local-kline/{code}")
 def local_kline(code: str, days: int = 400):
     """从本地数据库获取K线数据，如果没有则实时抓取"""
-    from backend.stock_db import get_kline_records, fetch_and_save_kline
+    from backend.services.db_client import get_kline_records, fetch_and_save_kline
     records = get_kline_records(code, limit=days)
     if len(records) < 20:
         # 数据不足，实时抓取

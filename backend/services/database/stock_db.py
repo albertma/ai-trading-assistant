@@ -161,6 +161,79 @@ def init_db():
             updated_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_rr_enabled ON risk_rules(enabled);
+        CREATE TABLE IF NOT EXISTS mental_models (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            icon TEXT DEFAULT '',
+            category TEXT NOT NULL,
+            description TEXT NOT NULL,
+            application TEXT DEFAULT '',
+            scenario TEXT DEFAULT '',
+            example TEXT DEFAULT '',
+            detail TEXT DEFAULT '',
+            tags TEXT DEFAULT '[]',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS sector_dispersion (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            sector TEXT NOT NULL,
+            avg_change REAL,
+            std_change REAL,
+            up_pct REAL,
+            stock_count INTEGER,
+            max_change REAL,
+            min_change REAL,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_sd_date ON sector_dispersion(date);
+        CREATE TABLE IF NOT EXISTS model_trainings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_name TEXT NOT NULL,
+            training_date TEXT NOT NULL,
+            market_context TEXT DEFAULT '',
+            training_answer TEXT DEFAULT '',
+            prediction TEXT DEFAULT '',
+            next_day_result TEXT DEFAULT '',
+            accuracy TEXT DEFAULT '',
+            market_context_date TEXT DEFAULT '',
+            reflection TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_mt_date ON model_trainings(training_date);
+        CREATE TABLE IF NOT EXISTS sector_cycles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            sector TEXT NOT NULL,
+            avg_change REAL,
+            dispersion REAL,
+            up_pct REAL,
+            stock_count INTEGER,
+            max_change REAL,
+            min_change REAL,
+            phase TEXT NOT NULL,
+            icon TEXT DEFAULT '',
+            phase_order INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(date, sector)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sc_date ON sector_cycles(date);
+        CREATE INDEX IF NOT EXISTS idx_sc_sector ON sector_cycles(sector);
+        CREATE TABLE IF NOT EXISTS sector_industry_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            sector TEXT NOT NULL,
+            rank INTEGER,
+            total_sectors INTEGER,
+            avg_change REAL,
+            up_ratio REAL,
+            stock_count INTEGER,
+            top_stocks TEXT DEFAULT '[]',
+            top_by_market_cap TEXT DEFAULT '[]',
+            updated_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(date, sector)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sic_date ON sector_industry_cache(date);
     """)
     conn.commit()
     # 迁移：已有数据库加 snapshot_notes 列

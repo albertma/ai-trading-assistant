@@ -171,20 +171,30 @@ def market_overview(
     limit_down = int((valid["change_pct"] <= -9.8).sum())
     avg_change = round(float(valid["change_pct"].mean()), 2)
 
-    # 板块热度
+    # 板块热度（含涨跌分化指标）
     hot_sectors = []
     if "sector" in df.columns:
         sector_valid = valid[valid["sector"].notna() & (valid["sector"] != "--")].copy()
         if not sector_valid.empty:
             sector_stats = (
-                sector_valid.groupby("sector")
-                .agg(avg_change=("change_pct", "mean"), count=("change_pct", "count"))
+                sector_valid.groupby("sector")["change_pct"]
+                .agg(["mean", "std", "count", lambda x: (x > 0).sum() / len(x) * 100])
+                .rename(columns={"mean": "avg_change", "std": "dispersion", "count": "count", "<lambda_0>": "up_pct"})
+                .reset_index()
                 .sort_values("avg_change", ascending=False)
                 .head(10)
             )
+            # 整体市场分化
+            all_dispersion = round(float(valid["change_pct"].std()), 2) if len(valid) > 1 else 0
             hot_sectors = [
-                {"name": idx, "avg_change": round(float(r["avg_change"]), 2), "count": int(r["count"])}
-                for idx, r in sector_stats.iterrows()
+                {
+                    "name": str(r["sector"]),
+                    "avg_change": round(float(r["avg_change"]), 2),
+                    "dispersion": round(float(r["dispersion"]), 2) if pd.notna(r["dispersion"]) else 0,
+                    "up_pct": round(float(r["up_pct"]), 1),
+                    "count": int(r["count"]),
+                }
+                for _, r in sector_stats.iterrows()
             ]
 
     # 成交额TOP10
@@ -199,19 +209,40 @@ def market_overview(
             "amount": round(r.get("amount", 0) / 1e8, 2) if r.get("amount") else None,
         })
 
-    # 涨跌幅TOP5
+    # 涨跌幅TOP10
     top_gainers = []
     top_losers = []
-    sorted_up = valid.sort_values("change_pct", ascending=False).head(5)
+    sorted_up = valid.sort_values("change_pct", ascending=False).head(10)
     for _, r in sorted_up.iterrows():
         top_gainers.append({"code": r.get("code",""), "name": r.get("name",""), "change_pct": r.get("change_pct")})
-    sorted_down = valid.sort_values("change_pct").head(5)
+    sorted_down = valid.sort_values("change_pct").head(10)
     for _, r in sorted_down.iterrows():
         top_losers.append({"code": r.get("code",""), "name": r.get("name",""), "change_pct": r.get("change_pct")})
 
     # 当前日期的可用session
     dates_info = _list_available()
     sessions_map = {d["date"]: d["sessions"] for d in dates_info}
+
+    # 整体市场分化值
+    market_dispersion = round(float(valid["change_pct"].std()), 2) if len(valid) > 1 else 0
+
+    # 涨跌分化最大的板块（按标准差排序）
+    sector_divergence = []
+    if "sector" in df.columns:
+        sector_valid = valid[valid["sector"].notna() & (valid["sector"] != "--")].copy()
+        if not sector_valid.empty:
+            div_stats = (
+                sector_valid.groupby("sector")["change_pct"]
+                .agg(["mean", "std", "count"])
+                .reset_index()
+                .sort_values("std", ascending=False)
+                .head(10)
+            )
+            sector_divergence = [
+                {"name": str(r["sector"]), "avg_change": round(float(r["mean"]), 2),
+                 "dispersion": round(float(r["std"]), 2), "count": int(r["count"])}
+                for _, r in div_stats.iterrows()
+            ]
 
     return {
         "date": data_date,
@@ -226,8 +257,10 @@ def market_overview(
             "limit_up": limit_up,
             "limit_down": limit_down,
             "avg_change_pct": avg_change,
+            "market_dispersion": market_dispersion,
         },
         "hot_sectors": hot_sectors,
+        "sector_divergence": sector_divergence,
         "top_volume": top_volume,
         "top_gainers": top_gainers,
         "top_losers": top_losers,
@@ -379,3 +412,37 @@ def sector_list(
             for idx, r in sectors.iterrows()
         ],
     }
+
+
+@router.get("/index-history")
+def index_history(days: int = Query(60, le=730)):
+    """获取沪深300和中证500的历史收盘价（用于双轴对比图）"""
+    import akshare as ak
+
+    def _fetch(symbol, name):
+        try:
+            df = ak.stock_zh_index_daily(symbol=f"sh{symbol}")
+            df = df.rename(columns={"date": "date", "close": "close"})
+            df = df.tail(days)
+            return [
+                {"date": str(r["date"])[:10], "close": round(float(r["close"]), 2)}
+                for _, r in df.iterrows()
+            ]
+        except Exception as e:
+            return []
+
+    hs300 = _fetch("000300", "沪深300")
+    zz500 = _fetch("000905", "中证500")
+
+    # 对齐日期计算比值
+    hs_map = {d["date"]: d["close"] for d in hs300}
+    zz_map = {d["date"]: d["close"] for d in zz500}
+    all_dates = sorted(set(hs_map.keys()) & set(zz_map.keys()))
+    ratio = []
+    for dt in all_dates:
+        ratio.append({
+            "date": dt,
+            "ratio": round(hs_map[dt] / zz_map[dt], 4),
+        })
+
+    return {"hs300": hs300, "zz500": zz500, "ratio": ratio}

@@ -3,6 +3,7 @@
 from fastapi import APIRouter, HTTPException
 import sqlite3, json, os, re
 from datetime import datetime
+from backend.services.financial_service import get_concept_board_data
 import requests as _requests
 
 DB_PATH = os.path.expanduser("~/Jarvis/ai_trading/stock_archive.db")
@@ -73,9 +74,10 @@ def _load_concept_boards():
     global _concept_board_cache
     if _concept_board_cache is None:
         try:
-            import akshare as ak
-            df = ak.stock_board_concept_name_em()
-            _concept_board_cache = set(df['board_name'].tolist())
+            board_data = get_concept_board_data()
+            _concept_board_cache = set(
+                name for name in board_data if not name.startswith("_")
+            )
         except Exception:
             _concept_board_cache = set()
     return _concept_board_cache

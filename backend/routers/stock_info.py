@@ -2,7 +2,7 @@
 个股资料缓存与搜索 API
 """
 from fastapi import APIRouter, Query
-from backend.stock_db import (
+from backend.services.db_client import (
     search_stock_info, get_stock_info, get_stock_info_count,
     refresh_stock_info_from_csv, refresh_stock_detail_from_akshare
 )

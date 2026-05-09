@@ -2180,13 +2180,15 @@ async function addToWatchlist() {
 async function loadFundamental(code) {
     fundLoading.value = true
     try {
-        const [fundResp, stmtResp] = await Promise.all([
-            getFundamental(code),
-            getFinancialStatements(code),
-        ])
+        const fundResp = await getFundamental(code)
         fundData.value = fundResp.data
+    } catch { /* fundamental 核心数据不能丢 */ }
+    // 财务报表独立加载，超时不影响核心数据
+    try {
+        const stmtResp = await getFinancialStatements(code)
         statementsData.value = stmtResp.data
-    } catch {} finally { fundLoading.value = false }
+    } catch { /* statements 可选 */ }
+    fundLoading.value = false
 }
 
 async function loadArchive(code) {

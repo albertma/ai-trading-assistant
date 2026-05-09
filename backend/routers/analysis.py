@@ -4,7 +4,6 @@
 from fastapi import APIRouter, HTTPException
 import pandas as pd
 import numpy as np
-import akshare as ak
 from datetime import date, datetime
 import json
 import os
@@ -12,7 +11,9 @@ from pathlib import Path
 
 from backend.config import MARKET_DATA_DIR, CACHE_DIR, CACHE_TTL_SECONDS
 from backend.patterns import detect_patterns
-from backend.stock_db import get_db
+from backend.services.db_client import get_db
+from backend.services.market_service import get_daily_history, get_ma, get_stock_news
+from backend.services.financial_service import get_financial_reports
 
 router = APIRouter()
 
@@ -27,9 +28,7 @@ def _get_stock_list() -> dict:
 
 def _get_ma(df: pd.DataFrame, period: int) -> float | None:
     """计算均线值"""
-    if df is None or len(df) < period:
-        return None
-    return round(float(df["close"].tail(period).mean()), 2)
+    return get_ma(df, period)
 
 
 def _check_trade_rules(*args, **kwargs) -> dict:
@@ -38,54 +37,8 @@ def _check_trade_rules(*args, **kwargs) -> dict:
 
 
 def _get_daily_history(code: str, max_days: int = 250) -> pd.DataFrame | None:
-    """获取个股日线行情（腾讯API优先，akshare兜底）"""
-    import urllib.request, json
-
-    # 方法1: 腾讯K线API（快、稳）
-    try:
-        market = "sh" if code.startswith("6") else "sz" if code.startswith(("0", "3")) else "bj"
-        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={market}{code},day,,,{min(max_days, 800)},qfq"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        resp = urllib.request.urlopen(req, timeout=8)
-        raw = json.loads(resp.read().decode())
-        kdata = raw["data"][f"{market}{code}"].get("qfqday") or raw["data"][f"{market}{code}"].get("day") or []
-
-        records = []
-        for k in kdata:
-            records.append({
-                "date": k[0], "open": float(k[1]), "close": float(k[2]),
-                "high": float(k[3]), "low": float(k[4]), "volume": float(k[5]),
-            })
-        df = pd.DataFrame(records)
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.sort_values("date").reset_index(drop=True)
-        df["pct_change"] = df["close"].pct_change() * 100
-        # 腾讯API成交量单位为"手"（1手=100股），换算成元
-        df["amount"] = df["volume"] * 100 * (df["high"] + df["low"] + df["close"]) / 3
-        return df
-    except Exception:
-        pass
-
-    # 方法2: akshare（兜底）
-    try:
-        df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
-        if df is not None and not df.empty:
-            df.columns = [c.strip() for c in df.columns]
-            df.rename(columns={
-                "日期": "date", "开盘": "open", "收盘": "close",
-                "最高": "high", "最低": "low", "成交量": "volume",
-                "成交额": "amount", "振幅": "amplitude",
-                "涨跌幅": "pct_change", "涨跌额": "change",
-                "换手率": "turnover",
-            }, inplace=True)
-            df["date"] = pd.to_datetime(df["date"])
-            df = df.sort_values("date").reset_index(drop=True)
-            for col in ["open", "close", "high", "low", "volume", "amount", "amplitude", "pct_change", "turnover"]:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-            return df
-    except Exception:
-        return None
+    """获取个股日线行情"""
+    return get_daily_history(code, max_days)
 
 
 @router.get("/{code}")
@@ -139,10 +92,19 @@ def analyze_stock(code: str):
         # 成交额
         volume_amount = float(df["amount"].iloc[-1]) if "amount" in df.columns else None
 
-        # 均线多头排列
+        # 均线多头排列 + 趋势状态 (四级 + 震荡)
         bullish_alignment = False
+        trend_status = "震荡"
         if all(v is not None for v in [ma5, ma10, ma20, ma60]):
             bullish_alignment = ma5 > ma10 > ma20 > ma60
+            if bullish_alignment:
+                trend_status = "多头"
+            elif ma5 < ma10 < ma20 < ma60:
+                trend_status = "空头"
+            elif ma5 > ma20 and close > ma60:
+                trend_status = "偏多"
+            elif ma5 < ma20 and close < ma60:
+                trend_status = "偏空"
 
         # K线形态识别
         kline_patterns = detect_patterns(df)
@@ -155,6 +117,7 @@ def analyze_stock(code: str):
             "rsi_14": rsi,
             "volume_amount": volume_amount,
             "bullish_alignment": bullish_alignment,
+            "trend_status": trend_status,
             "kline_patterns": kline_patterns,
         }
 
@@ -201,15 +164,14 @@ def analyze_stock(code: str):
     # --- 5. 新闻 ---
     news_list = []
     try:
-        news = ak.stock_news_em(symbol=code)
-        if news is not None and not news.empty:
-            for _, n in news.head(5).iterrows():
-                news_list.append({
-                    "title": n.get("新闻标题", n.get("标题", n.get("title", ""))),
-                    "time": str(n.get("发布时间", n.get("publish_time", "")))[:19],
-                    "source": n.get("文章来源", ""),
-                    "url": n.get("新闻链接", n.get("url", n.get("链接", ""))),
-                })
+        news_items = get_stock_news(code, 5)
+        for n in news_items:
+            news_list.append({
+                "title": n.get("新闻标题", n.get("标题", n.get("title", ""))),
+                "time": str(n.get("发布时间", n.get("publish_time", "")))[:19],
+                "source": n.get("文章来源", ""),
+                "url": n.get("新闻链接", n.get("url", n.get("链接", ""))),
+            })
     except:
         pass
 
@@ -217,7 +179,6 @@ def analyze_stock(code: str):
     custom_risk = None
     if tech_data and df is not None:
         try:
-            from backend.stock_db import get_financial_reports
             reports = get_financial_reports(code, 1)
             fin = dict(reports[0]) if reports else None
             patterns = []
@@ -225,7 +186,7 @@ def analyze_stock(code: str):
                 patterns = detect_patterns(df) if df is not None else []
             except:
                 pass
-            from backend.stock_db import evaluate_risk_rules
+            from backend.services.db_client import evaluate_risk_rules
             custom_risk = evaluate_risk_rules(code, tech_data, fin, None, patterns, avg_amount_10d)
         except:
             pass

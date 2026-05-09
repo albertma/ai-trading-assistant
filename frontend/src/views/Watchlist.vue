@@ -107,8 +107,11 @@
                                     <el-tag size="mini" :type="rec.risk_passed ? 'success' : 'danger'" effect="dark">
                                         {{ rec.risk_passed ? 'PASS' : 'FAIL' }}
                                     </el-tag>
-                                    <el-tag v-if="rec.bullish_alignment" size="mini" type="success" plain>多头</el-tag>
-                                    <el-tag v-else size="mini" type="info" plain>空头</el-tag>
+                                    <el-tag v-if="getTrendStatus(rec) === '多头'" size="mini" type="success" plain>多头</el-tag>
+                                    <el-tag v-else-if="getTrendStatus(rec) === '偏多'" size="mini" type="warning" plain>偏多</el-tag>
+                                    <el-tag v-else-if="getTrendStatus(rec) === '偏空'" size="mini" type="danger" plain>偏空</el-tag>
+                                    <el-tag v-else-if="getTrendStatus(rec) === '空头'" size="mini" type="danger" effect="dark">空头</el-tag>
+                                    <el-tag v-else size="mini" type="info" plain>震荡</el-tag>
                                     <span class="history-date">{{ rec.analysis_date }}</span>
                                     <div style="flex:1"></div>
                                     <el-popconfirm v-if="rec.record_type === 'snapshot'" title="确定删除此快照？" @confirm="handleDeleteSnapshot(rec)">
@@ -228,8 +231,8 @@
                     <el-tag :type="detailHist.risk_passed ? 'success' : 'danger'" size="medium" effect="dark">
                         {{ detailHist.risk_passed ? '✅ 风控通过' : '❌ 禁止买入' }}
                     </el-tag>
-                    <el-tag :type="detailHist.bullish_alignment ? 'success' : 'info'" size="medium">
-                        {{ detailHist.bullish_alignment ? '📈 均线多头' : '📉 均线空头' }}
+                    <el-tag :type="detailTagType(detailHist)" size="medium">
+                        {{ detailTagLabel(detailHist) }}
                     </el-tag>
                     <span style="color:#909399;font-size:13px;">分析日期：{{ detailHist.analysis_date }}</span>
                     <span v-if="detailHist.sector" style="color:#909399;font-size:13px;">{{ detailHist.sector }}</span>
@@ -525,6 +528,36 @@ async function refreshAnalysis() {
     } finally {
         analyzing.value = false
     }
+}
+
+// ===== 趋势状态判断（5级：多头/偏多/偏空/空头/震荡）=====
+function getTrendStatus(rec) {
+    // 优先使用后端返回的 trend_status
+    if (rec.trend_status && ['多头','偏多','偏空','空头','震荡'].includes(rec.trend_status)) {
+        return rec.trend_status
+    }
+    // 兜底：从已有MA数据计算
+    const { ma5, ma10, ma20, ma60, price } = rec
+    if (ma5 == null || ma10 == null || ma20 == null || ma60 == null) return '震荡'
+    if (ma5 > ma10 && ma10 > ma20 && ma20 > ma60) return '多头'
+    if (ma5 < ma10 && ma10 < ma20 && ma20 < ma60) return '空头'
+    if (ma5 > ma20 && price > ma60) return '偏多'
+    if (ma5 < ma20 && price < ma60) return '偏空'
+    return '震荡'
+}
+
+function detailTagType(rec) {
+    const s = getTrendStatus(rec)
+    if (s === '多头') return 'success'
+    if (s === '偏多') return 'warning'
+    if (s === '偏空') return 'danger'
+    if (s === '空头') return 'danger'
+    return 'info'
+}
+function detailTagLabel(rec) {
+    const s = getTrendStatus(rec)
+    const map = { '多头': '📈 均线多头', '偏多': '📈 均线偏多', '偏空': '📉 均线偏空', '空头': '📉 均线空头', '震荡': '〰️ 均线震荡' }
+    return map[s] || '〰️ 均线震荡'
 }
 
 // ===== 历次分析记录（从 profile API 的 analysis_history 提取） =====

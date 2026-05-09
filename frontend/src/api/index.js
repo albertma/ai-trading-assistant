@@ -23,6 +23,10 @@ export function getSentimentCycle(days = 7) {
     return api.get('/market/sentiment-cycle', { params: { days } })
 }
 
+export function getIndexHistory(days = 60) {
+    return api.get('/market/index-history', { params: { days } })
+}
+
 // ========== 持仓 ==========
 export function getPositions() {
     return api.get('/positions')
@@ -75,8 +79,13 @@ export function getContradiction(code) {
 }
 
 // ========== 产业链管理 ==========
-export function listIndustryChains() {
-    return api.get('/fundamental/chain-admin')
+export function listIndustryChains(params = {}) {
+    return api.get('/fundamental/chain-admin', { params })
+}
+export function getIndustryStocks(industry, board = '') {
+    return api.get(`/fundamental/chain-admin/${encodeURIComponent(industry)}/stocks`, {
+        params: board ? { board } : {}
+    })
 }
 export function getIndustryChain(industry) {
     return api.get(`/fundamental/chain-admin/${encodeURIComponent(industry)}`)

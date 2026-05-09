@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from backend.stock_db import (
+from backend.services.db_client import (
     get_risk_rules, add_risk_rule, update_risk_rule,
     delete_risk_rule, toggle_risk_rule, get_rule_types, seed_default_rules,
 )

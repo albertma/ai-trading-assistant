@@ -45,6 +45,22 @@
             </el-row>
         </el-card>
 
+        <!-- 沪深300 vs 中证500 双轴对比图 -->
+        <el-card v-if="indexData.hs300.length" shadow="hover" style="margin-top:16px;">
+            <template #header>
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <b>📈 沪深300 vs 中证500</b>
+                    <el-radio-group v-model="indexDays" size="small" @change="loadIndexHistory">
+                        <el-radio-button value="30">30天</el-radio-button>
+                        <el-radio-button value="60">60天</el-radio-button>
+                        <el-radio-button value="120">120天</el-radio-button>
+                        <el-radio-button value="730">2年</el-radio-button>
+                    </el-radio-group>
+                </div>
+            </template>
+            <div ref="indexChartRef" style="width:100%;height:380px;"></div>
+        </el-card>
+
         <!-- 市场状态卡片 -->
         <el-row v-if="!noData" :gutter="16">
             <el-col :span="6" v-for="card in statCards" :key="card.label">
@@ -241,8 +257,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
-import { getMarketOverview, getMarketDates, getSentimentCycle } from '../api/index.js'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { getMarketOverview, getMarketDates, getSentimentCycle, getIndexHistory } from '../api/index.js'
+import * as echarts from 'echarts'
 
 const loading = ref(true)
 const noData = ref(false)
@@ -260,6 +277,12 @@ const currentCycleStage = ref('')
 const cycleAssessment = ref({})
 const cycleCollapsed = ref(false)
 const cycleLoading = ref(false)
+
+// 指数双轴图
+const indexChartRef = ref(null)
+let indexChartInstance = null
+const indexData = ref({ hs300: [], zz500: [], ratio: [] })
+const indexDays = ref(60)
 
 // 日期选择
 const selectedDate = ref(null)
@@ -423,6 +446,90 @@ async function loadSentimentCycle() {
     }
 }
 
+// ===== 指数双轴图 =====
+async function loadIndexHistory() {
+    try {
+        const { data } = await getIndexHistory(indexDays.value)
+        indexData.value = { hs300: data.hs300 || [], zz500: data.zz500 || [], ratio: data.ratio || [] }
+        await nextTick()
+        renderIndexChart()
+    } catch (e) {
+        console.error('指数数据加载失败', e)
+    }
+}
+
+function renderIndexChart() {
+    if (!indexChartRef.value) return
+    if (!indexChartInstance) {
+        indexChartInstance = echarts.init(indexChartRef.value)
+    }
+    const hs300 = indexData.value.hs300
+    const zz500 = indexData.value.zz500
+    const ratio = indexData.value.ratio
+    // 对齐日期
+    const dates = [...new Set([...hs300.map(d => d.date), ...zz500.map(d => d.date)])].sort()
+    const hsMap = Object.fromEntries(hs300.map(d => [d.date, d.close]))
+    const zzMap = Object.fromEntries(zz500.map(d => [d.date, d.close]))
+    const ratioMap = Object.fromEntries(ratio.map(d => [d.date, d.ratio]))
+    const hsLine = dates.map(d => hsMap[d] ?? null)
+    const zzLine = dates.map(d => zzMap[d] ?? null)
+    const ratioLine = dates.map(d => ratioMap[d] ?? null)
+    const option = {
+        tooltip: {
+            trigger: 'axis',
+            formatter: function(params) {
+                let s = `<b>${params[0].axisValue}</b><br/>`
+                params.forEach(p => {
+                    if (p.value != null) {
+                        const v = p.seriesName === '沪深300/中证500' ? p.value.toFixed(4) : p.value.toFixed(2)
+                        s += `${p.marker} ${p.seriesName}: ${v}<br/>`
+                    }
+                })
+                return s
+            }
+        },
+        legend: { data: ['沪深300', '中证500', '沪深300/中证500'], top: 12 },
+        grid: { left: 60, right: 140, bottom: 40, top: 60 },
+        xAxis: {
+            type: 'category', data: dates, axisLabel: { rotate: 45, fontSize: 10 }
+        },
+        yAxis: [
+            { type: 'value', name: '沪深300', nameTextStyle: { color: '#5470c6' } },
+            { type: 'value', name: '中证500', nameTextStyle: { color: '#91cc75' } },
+            { type: 'value', name: '比值', nameTextStyle: { color: '#fc8452', padding: [0, 0, 0, 60] },
+              min: 'dataMin', max: 'dataMax', splitLine: { show: false },
+              axisLabel: { formatter: v => v.toFixed(3) }, position: 'right', offset: 60 },
+        ],
+        series: [
+            {
+                name: '沪深300', type: 'line', data: hsLine,
+                smooth: true, symbol: 'none',
+                lineStyle: { width: 2 },
+                yAxisIndex: 0,
+            },
+            {
+                name: '中证500', type: 'line', data: zzLine,
+                smooth: true, symbol: 'none',
+                lineStyle: { width: 2 },
+                yAxisIndex: 1,
+            },
+            {
+                name: '沪深300/中证500', type: 'line', data: ratioLine,
+                smooth: true, symbol: 'none',
+                lineStyle: { width: 1.5, type: 'dashed' },
+                itemStyle: { color: '#fc8452' },
+                yAxisIndex: 2,
+            },
+        ],
+    }
+    indexChartInstance.setOption(option, true)
+}
+
+// resize on window resize
+window.addEventListener('resize', () => {
+    if (indexChartInstance) indexChartInstance.resize()
+})
+
 onMounted(async () => {
     // 先获取可选日期列表
     try {
@@ -443,6 +550,8 @@ onMounted(async () => {
     await loadData(selectedDate.value)
     // 加载情绪周期
     await loadSentimentCycle()
+    // 加载指数历史
+    await loadIndexHistory()
 })
 </script>
 

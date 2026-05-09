@@ -4,10 +4,34 @@
 from fastapi import APIRouter, HTTPException
 import pandas as pd
 import numpy as np
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, datetime
 from pathlib import Path
 
-from backend.config import MARKET_DATA_DIR
+from backend.config import MARKET_DATA_DIR, POSITION_FILE
+from backend.services.db_client import get_financial_reports, save_financial_reports
+from backend.services.financial_service import (
+    get_financial_summary,
+    get_revenue_breakdown,
+    get_earnings_data,
+    get_expense_data,
+    get_concept_board_data,
+    get_financial_indicators,
+    get_management_changes,
+    get_main_shareholders,
+    get_balance_sheet,
+    get_cash_flow_sheet,
+    get_profit_sheet,
+    get_concept_board_constituents,
+)
+from backend.services.external.csv_client import (
+    find_latest_csv,
+    get_industry_data,
+    get_industry_from_code,
+    get_all_stocks_in_industry,
+    get_stock_detail_from_csv,
+    get_industry_stocks_detail,
+    get_board_stocks_detail,
+)
 import sqlite3
 import json
 import os
@@ -20,133 +44,28 @@ router = APIRouter()
 # 1. 财务摘要 (akshare stock_financial_abstract_ths)
 # ============================================================
 def _get_financial_summary(code: str) -> dict | None:
-    import akshare as ak
-    try:
-        df = ak.stock_financial_abstract_ths(symbol=code)
-        if df is None or df.empty:
-            return None
-
-        records = []
-        for _, r in df.iterrows():
-            rec = {}
-            for col in df.columns:
-                val = r[col]
-                if isinstance(val, (np.integer,)):
-                    rec[col] = int(val)
-                elif isinstance(val, (np.floating,)):
-                    rec[col] = round(float(val), 4) if not pd.isna(val) else None
-                elif isinstance(val, str):
-                    v = val.strip()
-                    # 去除单位符号（亿、万、%）
-                    v = v.replace("亿", "").replace("万", "").replace("%", "").strip()
-                    rec[col] = v if v not in ("--", "", "False") else None
-                else:
-                    rec[col] = val
-            records.append(rec)
-
-        return {"columns": list(df.columns), "records": records}
-    except Exception as e:
-        return None
+    """从外部模块获取财务摘要"""
+    return get_financial_summary(code)
 
 
 # ============================================================
 # 2. 收入构成（主营业务）
 # ============================================================
 def _get_revenue_breakdown(code: str) -> list | None:
-    """获取主营业务构成（产品/经营范围）"""
-    import akshare as ak
-    try:
-        df = ak.stock_zyjs_ths(symbol=code)
-        if df is None or df.empty:
-            return None
-        result = []
-        for _, r in df.iterrows():
-            result.append({
-                "business": r.get("主营业务", ""),
-                "product_type": r.get("产品类型", ""),
-                "products": r.get("产品名称", ""),
-                "scope": r.get("经营范围", ""),
-            })
-        return result if result else None
-    except Exception:
-        return None
+    """从外部模块获取主营业务构成"""
+    return get_revenue_breakdown(code)
 
 
 # ============================================================
 # 3. 行业数据（从本地CSV获取板块表现）
 # ============================================================
 def _find_latest_csv(max_lookback: int = 30) -> str | None:
-    """找最新的可用CSV，往回搜max_lookback天（默认30天）"""
-    today = date.today()
-    for i in range(max_lookback):
-        d = (today - timedelta(days=i)).isoformat()
-        path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
-        if path.exists():
-            return str(path)
-    return None
+    """找最新的可用CSV"""
+    return find_latest_csv(max_lookback)
 
 def _get_industry_data(sector: str | None) -> dict | None:
     """获取行业板块数据：板块排名、平均涨幅、龙头股"""
-    if not sector or sector == "--":
-        return None
-
-    csv_path = _find_latest_csv()
-    if csv_path is None:
-        return None
-
-    df = pd.read_csv(csv_path, encoding="utf-16", sep="\t")
-
-    # 从文件名提取日期
-    import re
-    m = re.search(r'(\d{4}-\d{2}-\d{2})', csv_path)
-    csv_date = m.group(1) if m else str(date.today())
-
-    # 该行业全部股票
-    sector_df = df[df["所属行业"] == sector].copy()
-    if sector_df.empty:
-        return None
-
-    # 行业整体排名
-    all_sectors = df.groupby("所属行业")["涨幅"].mean().sort_values(ascending=False)
-    total = len(all_sectors)
-    rank = all_sectors.index.get_loc(sector) + 1 if sector in all_sectors.index else None
-
-    def _row_to_stock(r):
-        return {
-            "code": str(r["代码"]).strip("'\""),
-            "name": r["名称"],
-            "price": float(r["最新"]) if pd.notna(r["最新"]) else 0,
-            "change_pct": float(r["涨幅"]) if pd.notna(r["涨幅"]) else 0,
-            "market_cap": float(r["总市值"]) if pd.notna(r["总市值"]) else 0,
-        }
-
-    # 头部股票（按涨幅）
-    top_by_gain = []
-    for _, r in sector_df.nlargest(5, "涨幅").iterrows():
-        top_by_gain.append(_row_to_stock(r))
-
-    # 龙头股（按总市值）
-    top_by_mcap = []
-    for _, r in sector_df.nlargest(5, "总市值").iterrows():
-        top_by_mcap.append(_row_to_stock(r))
-
-    # 行业统计
-    valid = sector_df[sector_df["涨幅"].notna()]
-    avg_chg = float(valid["涨幅"].mean()) if not valid.empty else 0
-    up_count = int((valid["涨幅"] > 0).sum())
-    total_count = int(len(valid))
-
-    return {
-        "sector": sector,
-        "date": csv_date,
-        "rank": rank,
-        "total_sectors": total,
-        "avg_change": round(avg_chg, 2),
-        "up_ratio": round(up_count / total_count * 100, 1) if total_count > 0 else 0,
-        "stock_count": total_count,
-        "top_stocks": top_by_gain,
-        "top_by_market_cap": top_by_mcap,
-    }
+    return get_industry_data(sector)
 
 
 # ============================================================
@@ -335,7 +254,6 @@ def _get_supply_chain(sector: str | None) -> list | None:
     if not sector or sector == "--":
         return None
 
-    import akshare as ak
     import time
 
     cache_key = f"chain_{sector}"
@@ -348,36 +266,15 @@ def _get_supply_chain(sector: str | None) -> list | None:
     if not chain_def:
         return None
 
-    try:
-        boards_df = ak.stock_board_concept_name_em()
-        board_map = {}
-        for _, r in boards_df.iterrows():
-            board_map[r["板块名称"]] = r["板块代码"]
-    except Exception:
-        return None
-
     result = []
     for role, board_names in chain_def.items():
         role_data = {"role": role, "boards": []}
         for bname in board_names:
-            board_code = board_map.get(bname)
-            if not board_code:
-                continue
             try:
-                cons_df = ak.stock_board_concept_cons_em(symbol=bname)
-                top5 = cons_df.nlargest(5, "涨跌幅")[["代码", "名称", "最新价", "涨跌幅"]]
-                stocks = []
-                for _, r in top5.iterrows():
-                    stocks.append({
-                        "code": str(r["代码"]).strip(),
-                        "name": r["名称"],
-                        "price": float(r["最新价"]) if pd.notna(r["最新价"]) else 0,
-                        "change_pct": float(r["涨跌幅"]) if pd.notna(r["涨跌幅"]) else 0,
-                    })
+                stocks = get_concept_board_constituents(bname)
                 role_data["boards"].append({
                     "board_name": bname,
-                    "board_code": board_code,
-                    "stock_count": len(cons_df),
+                    "stock_count": len(stocks),
                     "top_stocks": stocks,
                 })
             except Exception:
@@ -520,37 +417,8 @@ def _get_dupont_analysis(code: str) -> dict | None:
 
 
 def _get_earnings_data(code: str) -> dict:
-    """从业绩报表获取关键财务数据"""
-    import akshare as ak
-    try:
-        result = {}
-        for date_tag in ['20250331', '20250630', '20250930', '20251231', '20260331']:
-            try:
-                df = ak.stock_yjbb_em(date=date_tag)
-                row = df[df['股票代码'] == code]
-                if not row.empty:
-                    r = row.to_dict('records')[0]
-                    period = date_tag[:4] + '-' + date_tag[4:6] + '-31' if date_tag[4:6] in ('01','03','05','07','08','10','12') else date_tag[:4] + '-' + date_tag[4:6] + '-30'
-                    if date_tag[4:6] == '09':
-                        period = date_tag[:4] + '-09-30'
-                    result[period] = {
-                        "revenue": r.get("营业总收入-营业总收入"),
-                        "revenue_yoy": r.get("营业总收入-同比增长"),
-                        "revenue_qoq": r.get("营业总收入-季度环比增长"),
-                        "net_profit": r.get("净利润-净利润"),
-                        "profit_yoy": r.get("净利润-同比增长"),
-                        "profit_qoq": r.get("净利润-季度环比增长"),
-                        "gross_margin": r.get("销售毛利率"),
-                        "roe": r.get("净资产收益率"),
-                        "eps": r.get("每股收益"),
-                        "bps": r.get("每股净资产"),
-                        "ocf_per_share": r.get("每股经营现金流量"),
-                    }
-            except Exception:
-                pass
-        return result
-    except Exception:
-        return {}
+    """从外部模块获取业绩报表数据"""
+    return get_earnings_data(code)
 
 
 def _generate_dupont_commentary(code: str, rows: list, changes: list) -> list:
@@ -696,89 +564,8 @@ def dupont_commentary(code: str):
 # 5. 费用分析
 # ============================================================
 def _get_expense_data(code: str) -> dict | None:
-    """共享的费用分析函数，返回 rows+summary 或 None"""
-    import akshare as ak
-    market = "SZ" if code.startswith(("0", "3", "2")) else "SH"
-    try:
-        df = ak.stock_profit_sheet_by_report_em(symbol=f"{market}{code}")
-        df = df.sort_values("REPORT_DATE", ascending=False)
-    except Exception:
-        return None
-
-    rows = []
-    for _, r in df.head(8).iterrows():
-        revenue = r.get("TOTAL_OPERATE_INCOME")
-        if not revenue or revenue <= 0:
-            continue
-
-        def as_ratio(val):
-            return round(val / revenue * 100, 2) if val and val > 0 else None
-
-        def as_yoy(val):
-            return round(val, 2) if val and val not in (None, "nan", 0) else None
-
-        item = {
-            "period": str(r["REPORT_DATE"])[:10],
-            "revenue": round(revenue / 1e8, 2),
-            "revenue_yoy": as_yoy(r.get("TOTAL_OPERATE_INCOME_YOY")),
-        }
-        sale = r.get("SALE_EXPENSE")
-        if sale and sale > 0:
-            item["sale_expense"] = round(sale / 1e8, 4)
-            item["sale_ratio"] = as_ratio(sale)
-            item["sale_yoy"] = as_yoy(r.get("SALE_EXPENSE_YOY"))
-        manage = r.get("MANAGE_EXPENSE")
-        if manage and manage > 0:
-            item["manage_expense"] = round(manage / 1e8, 4)
-            item["manage_ratio"] = as_ratio(manage)
-            item["manage_yoy"] = as_yoy(r.get("MANAGE_EXPENSE_YOY"))
-        research = r.get("ME_RESEARCH_EXPENSE")
-        if research and research > 0:
-            item["research_expense"] = round(research / 1e8, 4)
-            item["research_ratio"] = as_ratio(research)
-            item["research_yoy"] = as_yoy(r.get("ME_RESEARCH_EXPENSE_YOY"))
-        finance = r.get("FINANCE_EXPENSE")
-        if finance and finance != 0:
-            item["finance_expense"] = round(finance / 1e8, 4)
-            item["finance_ratio"] = as_ratio(abs(finance))
-            item["finance_yoy"] = as_yoy(r.get("FINANCE_EXPENSE_YOY"))
-        total_cost = r.get("TOTAL_OPERATE_COST")
-        if total_cost and total_cost > 0:
-            item["total_cost_ratio"] = round(total_cost / revenue * 100, 2)
-            item["cost_yoy"] = as_yoy(r.get("TOTAL_OPERATE_COST_YOY"))
-
-        rows.append(item)
-
-    rows = rows[:5]
-    trend_notes = []
-    if len(rows) >= 2:
-        first, last = rows[-1], rows[0]
-        for key, label in [("sale_ratio", "销售费用率"), ("manage_ratio", "管理费用率"),
-                           ("finance_ratio", "财务费用率"), ("total_cost_ratio", "总成本率")]:
-            fv = first.get(key)
-            lv = last.get(key)
-            if fv is not None and lv is not None:
-                chg = lv - fv
-                if abs(chg) >= 0.1:
-                    direction = "上升" if chg > 0 else "下降"
-                    trend_notes.append(f"{label}{direction}{abs(chg):.1f}pp")
-        for key, label in [("sale_expense", "销售费用"), ("manage_expense", "管理费用"),
-                           ("finance_expense", "财务费用")]:
-            fv = first.get(key)
-            lv = last.get(key)
-            if fv is not None and lv is not None:
-                rev_chg_pct = (last["revenue"] / first["revenue"] - 1) * 100
-                exp_chg_pct = (lv / fv - 1) * 100
-                if abs(exp_chg_pct - rev_chg_pct) > 20:
-                    if exp_chg_pct > rev_chg_pct + 20:
-                        trend_notes.append(f"{label}增速({exp_chg_pct:+.0f}%)跑赢营收({rev_chg_pct:+.0f}%)")
-                    elif rev_chg_pct > exp_chg_pct + 20:
-                        trend_notes.append(f"{label}增速({exp_chg_pct:+.0f}%)跑输营收({rev_chg_pct:+.0f}%)")
-
-    return {
-        "rows": rows,
-        "summary": trend_notes[:5] if trend_notes else ["近5期费用结构稳定"],
-    }
+    """从外部模块获取费用分析数据"""
+    return get_expense_data(code)
 
 
 @router.get("/expense/{code}")
@@ -792,36 +579,13 @@ def expense_analysis(code: str):
 
 
 _concept_board_cache = {}
-_CONCEPT_CACHE_TTL = 300  # 5分钟
+_concept_board_cache_internal = {}  # 兼容旧引用
+_cycle_analysis_cache = {}  # 按(sector,date)缓存cycle结果
+_CONCEPT_CACHE_TTL = 86400  # 24小时
 
 def _get_concept_board_data() -> dict:
-    """获取概念板块实时行情并缓存"""
-    global _concept_board_cache
-    import time
-    now = time.time()
-    if _concept_board_cache and (now - _concept_board_cache.get("_ts", 0)) < _CONCEPT_CACHE_TTL:
-        return _concept_board_cache
-    
-    try:
-        import akshare as ak
-        df = ak.stock_board_concept_name_em()
-        result = {}
-        for _, r in df.iterrows():
-            name = str(r.get("板块名称", ""))
-            result[name] = {
-                "change_pct": float(r.get("涨跌幅", 0) or 0),
-                "up_count": int(r.get("上涨家数", 0) or 0),
-                "down_count": int(r.get("下跌家数", 0) or 0),
-                "turnover": float(r.get("换手率", 0) or 0),
-                "leader": str(r.get("领涨股票", "")),
-                "leader_chg": float(r.get("领涨股票-涨跌幅", 0) or 0),
-            }
-        result["_ts"] = now
-        _concept_board_cache = result
-        return result
-    except Exception:
-        return _concept_board_cache or {}
-
+    """从外部模块获取概念板块实时行情"""
+    return get_concept_board_data()
 
 def _lookup_board(board_name: str, board_data: dict) -> dict | None:
     """智能模糊匹配概念板块名称"""
@@ -864,9 +628,13 @@ def _lookup_board(board_name: str, board_data: dict) -> dict | None:
 
 
 def _analyze_industry_cycle(sector: str, industry_data: dict | None) -> dict | None:
-    """行业景气周期 + 供需矛盾分析 + 量化预测"""
+    """行业景气周期 + 供需矛盾分析 + 量化预测（结果按天缓存）"""
     if not industry_data:
         return None
+    _today = str(date.today())
+    _ckey = (sector, _today)
+    if _ckey in _cycle_analysis_cache:
+        return _cycle_analysis_cache[_ckey]
     
     avg_chg = industry_data.get("avg_change", 0) or 0
     up_ratio = industry_data.get("up_ratio", 0) or 0
@@ -1042,6 +810,8 @@ def _analyze_industry_cycle(sector: str, industry_data: dict | None) -> dict | N
         "outlook_dir": outlook_dir,
         "short_term": short_term,
     }
+    _cycle_analysis_cache[_ckey] = result
+    return result
 
 
 # ============================================================
@@ -1056,15 +826,33 @@ _COMMON_FALSE = {"中国", "东方", "南方", "北方", "国际", "集团", "�
                   "龙头", "高新", "智能", "数字", "信息", "第一", "龙头股份"}
 
 @router.get("/chain-admin")
-def list_chains():
-    return {"success": True, "data": _get_all_chain_industries()}
+def list_chains(page: int = 1, page_size: int = 20, search: str = ""):
+    data = _get_all_chain_industries()
+
+    # 搜索过滤
+    if search:
+        q = search.lower()
+        data = [d for d in data if q in d["industry"].lower()]
+
+    total = len(data)
+    start = (page - 1) * page_size
+    paged = data[start:start + page_size]
+
+    return {
+        "success": True,
+        "data": paged,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": max(1, (total + page_size - 1) // page_size),
+    }
 
 @router.get("/chain-admin/concept-boards")
 def list_concept_boards():
     try:
-        import akshare as ak
-        df = ak.stock_board_concept_name_em()
-        boards = [{"name": r["板块名称"], "code": r["板块代码"]} for _, r in df.iterrows()]
+        board_data = get_concept_board_data()
+        boards = [{"name": name, "change_pct": info.get("change_pct")}
+                  for name, info in board_data.items() if not name.startswith("_")]
         return {"success": True, "data": boards}
     except Exception as e:
         return {"success": False, "msg": f"获取概念板块失败: {e}"}
@@ -1147,8 +935,20 @@ def delete_chain(industry: str):
         return {"success": True, "msg": f"🗑️ 产业链 [{industry}] 已删除"}
     raise HTTPException(status_code=500, detail="删除失败")
 
+
+@router.get("/chain-admin/{industry}/stocks")
+def list_industry_stocks(industry: str, board: str = ""):
+    """获取某行业的股票列表（按市值排序），可选传 board 过滤到概念板块"""
+    if board:
+        stocks = get_board_stocks_detail(board)
+    else:
+        stocks = get_industry_stocks_detail(industry)
+    return {"success": True, "data": stocks, "total": len(stocks)}
+
+
 @router.get("/chain-admin/industries/unmapped")
 def list_unmapped_industries():
+
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -1266,18 +1066,8 @@ def fundamental_analysis(code: str):
         pass
 
     if not sector or sector == "--":
-        # CSV兜底：找5天内
-        today = date.today()
-        for i in range(5):
-            d = (today - timedelta(days=i)).isoformat()
-            path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
-            if path.exists():
-                df = pd.read_csv(path, encoding="utf-16", sep="\t", engine="python")
-                df["代码"] = df["代码"].astype(str).str.strip("'\"")
-                match = df[df["代码"] == code]
-                if not match.empty:
-                    sector = match.iloc[0].get("所属行业", "")
-                break
+        # CSV兜底
+        sector = get_industry_from_code(code, 5)
 
     # 行业前瞻
     industry = _get_industry_data(sector)
@@ -1318,17 +1108,7 @@ def supply_chain_api(code: str):
         pass
 
     if not sector or sector == "--":
-        today = date.today()
-        for i in range(5):
-            d = (today - timedelta(days=i)).isoformat()
-            path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
-            if path.exists():
-                df = pd.read_csv(path, encoding="utf-16", sep="\t", engine="python")
-                df["代码"] = df["代码"].astype(str).str.strip("'\"")
-                match = df[df["代码"] == code]
-                if not match.empty:
-                    sector = match.iloc[0].get("所属行业", "")
-                break
+        sector = get_industry_from_code(code, 5)
 
     supply = _get_supply_chain(sector)
     return {
@@ -1498,7 +1278,6 @@ def _recommend_mental_models(code, name, sector, total_pct, primary_name, pe, ch
 # ============================================================
 def _get_contradiction_analysis(code: str) -> dict | None:
     """矛盾分析：贯穿辩证分析，找出主要/次要矛盾及转化条件"""
-    import akshare as ak
     from backend.routers.analysis import _get_stock_list
     import numpy as np
 
@@ -1511,9 +1290,7 @@ def _get_contradiction_analysis(code: str) -> dict | None:
     # 1a. 财务分析指标
     indicators = {}
     try:
-        df_ind = ak.stock_financial_analysis_indicator(symbol=code, start_year="2023")
-        df_ind = df_ind.sort_values("日期", ascending=False)
-        records_ind = df_ind.to_dict("records")
+        records_ind = get_financial_indicators(code, "2023")
         indicators = records_ind[0] if records_ind else {}
     except Exception:
         indicators = {}
@@ -1524,18 +1301,9 @@ def _get_contradiction_analysis(code: str) -> dict | None:
 
     # 1c. 行业数据（从CSV）
     sector = None
-    today = date.today()
-    csv_df = None
-    for i in range(5):
-        d = (today - timedelta(days=i)).isoformat()
-        path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
-        if path.exists():
-            csv_df = pd.read_csv(path, encoding="utf-16", sep="\t", engine="python")
-            csv_df["代码"] = csv_df["代码"].astype(str).str.strip("'\"")
-            match = csv_df[csv_df["代码"] == code]
-            if not match.empty:
-                sector = match.iloc[0].get("所属行业", "")
-            break
+    detail = get_stock_detail_from_csv(code)
+    if detail:
+        sector = detail.get("industry", "")
 
     industry = _get_industry_data(sector)
 
@@ -2221,37 +1989,20 @@ _BS_LABELS = {
 
 
 def _fetch_statement(code: str, func_name: str) -> list[dict]:
-    """获取单张报表并解析关键字段"""
-    import akshare as ak
-    import importlib
-
-    market = "SZ" if code.startswith(("0", "3", "2")) else "SH"
-    func = getattr(ak, func_name)
-    df = func(symbol=f"{market}{code}")
-    df = df.sort_values("REPORT_DATE", ascending=False)
-
-    rows = []
-    for _, r in df.head(5).iterrows():
-        period = str(r["REPORT_DATE"])[:10]
-        items = {}
-        for col in _BS_LABELS:
-            val = r.get(col)
-            if val is not None and val != 0 and not (isinstance(val, float) and (val != val)):
-                items[col] = round(val / 1e8, 2) if abs(val) > 1e4 else val
-        rows.append({"period": period, "items": items})
-    return rows
+    """从外部模块获取单张报表"""
+    return fetch_statement(code, func_name)
 
 
 def _get_bs_items(code: str):
-    return _fetch_statement(code, "stock_balance_sheet_by_report_em")
+    return get_balance_sheet(code)
 
 
 def _get_cf_items(code: str):
-    return _fetch_statement(code, "stock_cash_flow_sheet_by_report_em")
+    return get_cash_flow_sheet(code)
 
 
 def _get_ps_items(code: str):
-    return _fetch_statement(code, "stock_profit_sheet_by_report_em")
+    return get_profit_sheet(code)
 
 
 # ============================================================
@@ -2850,58 +2601,27 @@ _DIM_LABELS = {
 
 def _get_industry_from_code(code: str) -> str:
     """从CSV获取股票所属行业"""
-    from datetime import date, timedelta
-    today = date.today()
-    for i in range(10):
-        d = (today - timedelta(days=i)).isoformat()
-        path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
-        if path.exists():
-            df = pd.read_csv(path, encoding="utf-16", sep="	", engine="python")
-            df["代码"] = df["代码"].astype(str).str.strip("'\"")
-            match = df[df["代码"] == code]
-            if not match.empty:
-                return str(match.iloc[0].get("所属行业", ""))
-            break
-    return ""
+    return get_industry_from_code(code)
 
 
 def _get_all_stocks_in_industry(industry: str) -> list[str]:
     """获取该行业所有股票代码"""
-    from datetime import date, timedelta
-    today = date.today()
-    for i in range(10):
-        d = (today - timedelta(days=i)).isoformat()
-        path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
-        if path.exists():
-            df = pd.read_csv(path, encoding="utf-16", sep="	", engine="python")
-            df["代码"] = df["代码"].astype(str).str.strip("'\"")
-            match = df[df["所属行业"] == industry].copy()
-            if not match.empty:
-                match["总市值"] = match["总市值"].astype(str).str.replace(",", "", regex=False)
-                match["总市值"] = pd.to_numeric(match["总市值"], errors="coerce")
-                codes = match.sort_values("总市值", ascending=False)["代码"].head(10).tolist()
-                return codes
-            break
-    return []
+    return get_all_stocks_in_industry(industry)
 
 
 @router.get("/comprehensive/{code}")
 def comprehensive_analysis(code: str):
     """综合基本面分析：6大维度 + 同行对比 + 管理层分析"""
-    import akshare as ak
     from backend.routers.analysis import _get_stock_list
 
     stock_map = _get_stock_list()
     name = stock_map.get(code, "")
-    market = "SZ" if code.startswith(("0", "3", "2")) else "SH"
     result = {"code": code, "name": name}
 
     # ---- 1. 财务分析指标（核心数据源） ----
     indicators = {}
     try:
-        df_ind = ak.stock_financial_analysis_indicator(symbol=code, start_year="2023")
-        df_ind = df_ind.sort_values("日期", ascending=False)
-        records = df_ind.to_dict("records")
+        records = get_financial_indicators(code, "2023")
         indicators = {"raw": records, "latest": records[0] if records else {}}
     except Exception as e:
         indicators = {"raw": [], "latest": {}, "error": str(e)}
@@ -3105,13 +2825,12 @@ def comprehensive_analysis(code: str):
     management = {}
     # 3a. 管理层持股变动（近2年）
     try:
-        mgmt_df = ak.stock_management_change_ths(symbol=code)
-        mgmt_df = mgmt_df.sort_values("变动日期", ascending=False)
-        recent = mgmt_df.head(10)
+        mgmt_records = get_management_changes(code)
+        recent = pd.DataFrame(mgmt_records) if mgmt_records else pd.DataFrame()
         mgmt_changes = []
         insider_buy = 0
         insider_sell = 0
-        for _, r in recent.iterrows():
+        for _, r in recent.head(10).iterrows():
             chg = str(r.get("变动数量", "")).strip()
             qty = None
             if "增持" in chg:
@@ -3143,16 +2862,10 @@ def comprehensive_analysis(code: str):
 
     # 3b. 主要股东
     try:
-        sh_df = ak.stock_main_stock_holder(stock=code)
-        # 取最新报告期
-        sh_df = sh_df.sort_values("截至日期", ascending=False)
-        latest_date = sh_df.iloc[0].get("截至日期")
-        sh_df = sh_df[sh_df["截至日期"] == latest_date].copy()
-        # 获取股东总数（从第一行）
-        total_holders = sh_df.iloc[0].get("股东总数") if "股东总数" in sh_df.columns else None
-        if total_holders is not None and isinstance(total_holders, float) and total_holders != total_holders:
-            total_holders = None
-        management["total_holders"] = flt(total_holders) if total_holders else None
+        sh_df_raw, total_holders = get_main_shareholders(code)
+        if sh_df_raw is not None:
+            sh_df = sh_df_raw.copy()
+            management["total_holders"] = flt(total_holders) if total_holders else None
         # 按持股比例排序，去重（同一股东多类别合并）
         sh_df = sh_df.dropna(subset=["持股比例"])
         sh_df["持股比例"] = pd.to_numeric(sh_df["持股比例"], errors="coerce")
@@ -3306,9 +3019,9 @@ def comprehensive_analysis(code: str):
 
         for pc in peer_codes:
             try:
-                pdf = ak.stock_financial_analysis_indicator(symbol=pc, start_year="2024")
-                if not pdf.empty:
-                    plat = pdf.sort_values("日期", ascending=False).iloc[0]
+                precords = get_financial_indicators(pc, "2024")
+                if precords:
+                    plat = precords[0]
                     for k in peer_metrics:
                         v = plat.get(k)
                         if v is not None and v != "" and v == v:

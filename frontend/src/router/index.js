@@ -10,9 +10,11 @@ import Watchlist from '../views/Watchlist.vue'
 import PositionsAnalysis from '../views/PositionsAnalysis.vue'
 import ChainManager from '../views/ChainManager.vue'
 import KnowledgeGraph from '../views/KnowledgeGraph.vue'
+import MentalModels from '../views/MentalModels.vue'
 
 const routes = [
     { path: '/', name: 'Dashboard', component: Dashboard, meta: { title: '市场概览', icon: 'DataAnalysis' } },
+    { path: '/sector-analysis', name: 'SectorAnalysis', component: () => import('../views/SectorAnalysis.vue'), meta: { title: '板块分析', icon: 'DataBoard' } },
     { path: '/watchlist', name: 'Watchlist', component: Watchlist, meta: { title: '观察池', icon: 'View' } },
     { path: '/positions', name: 'Positions', component: Positions, meta: { title: '持仓看板', icon: 'Wallet' } },
     { path: '/positions-analysis', name: 'PositionsAnalysis', component: PositionsAnalysis, meta: { title: '持仓分析', icon: 'DataBoard' } },
@@ -22,6 +24,8 @@ const routes = [
     { path: '/reports', name: 'Reports', component: Reports, meta: { title: '复盘报告', icon: 'Document' } },
     { path: '/chains', name: 'ChainManager', component: ChainManager, meta: { title: '产业链配置', icon: 'Connection' } },
     { path: '/knowledge-graph', name: 'KnowledgeGraph', component: KnowledgeGraph, meta: { title: '知识库', icon: 'Cpu' } },
+    { path: '/mental-models', name: 'MentalModels', component: MentalModels, meta: { title: '模型库', icon: 'Platform' } },
+    { path: '/mental-training', name: 'MentalTraining', component: () => import('../views/MentalTraining.vue'), meta: { title: '每日模型训练', icon: 'TrendCharts' } },
 ]
 
 const router = createRouter({

@@ -23,6 +23,9 @@
                     <el-menu-item index="/">
                         <span>📊 大盘行情</span>
                     </el-menu-item>
+                    <el-menu-item index="/sector-analysis">
+                        <span>📊 板块分析</span>
+                    </el-menu-item>
                     <el-menu-item index="/reports">
                         <span>📋 复盘报告</span>
                     </el-menu-item>
@@ -47,14 +50,18 @@
                     <el-icon><Search /></el-icon>
                     <span>个股分析</span>
                 </el-menu-item>
-                <el-menu-item index="/risk">
-                    <el-icon><WarningFilled /></el-icon>
-                    <span>风控检查</span>
-                </el-menu-item>
-                <el-menu-item index="/risk-rules">
-                    <el-icon><Setting /></el-icon>
-                    <span>风控规则</span>
-                </el-menu-item>
+                <el-sub-menu index="risk-group">
+                    <template #title>
+                        <el-icon><WarningFilled /></el-icon>
+                        <span>风控管理</span>
+                    </template>
+                    <el-menu-item index="/risk">
+                        <span>⚠️ 风控检查</span>
+                    </el-menu-item>
+                    <el-menu-item index="/risk-rules">
+                        <span>⚙️ 风控规则</span>
+                    </el-menu-item>
+                </el-sub-menu>
                 <el-menu-item index="/chains">
                     <el-icon><Connection /></el-icon>
                     <span>产业链配置</span>
@@ -63,6 +70,18 @@
                     <el-icon><Cpu /></el-icon>
                     <span>知识库</span>
                 </el-menu-item>
+                <el-sub-menu index="mental-group">
+                    <template #title>
+                        <el-icon><Platform /></el-icon>
+                        <span>思维模型</span>
+                    </template>
+                    <el-menu-item index="/mental-models">
+                        <span>📚 模型库</span>
+                    </el-menu-item>
+                    <el-menu-item index="/mental-training">
+                        <span>🧠 每日模型训练</span>
+                    </el-menu-item>
+                </el-sub-menu>
             </el-menu>
         </el-aside>
 

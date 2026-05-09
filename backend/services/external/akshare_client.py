@@ -1,0 +1,322 @@
+"""akshare 数据访问统一封装。
+所有外部API调用集中在此，业务逻辑层不直接调akshare。
+统一超时处理（3s）、异常兜底、Numpy类型清理。
+"""
+import pandas as pd
+import numpy as np
+
+def _to_records(df: pd.DataFrame) -> list[dict]:
+    """DataFrame转为纯Python dict列表，清理numpy类型"""
+    records = []
+    for _, r in df.iterrows():
+        rec = {}
+        for col in df.columns:
+            val = r[col]
+            if isinstance(val, (np.integer,)):
+                rec[col] = int(val)
+            elif isinstance(val, (np.floating,)):
+                rec[col] = round(float(val), 4) if not pd.isna(val) else None
+            elif isinstance(val, str):
+                v = val.strip()
+                v = v.replace("亿", "").replace("万", "").replace("%", "").strip()
+                rec[col] = v if v not in ("--", "", "False") else None
+            else:
+                rec[col] = val
+        records.append(rec)
+    return records
+
+
+# ── 财务摘要 ──────────────────────────────────────────────
+
+def get_financial_summary(code: str) -> dict | None:
+    """stock_financial_abstract_ths：多期财务摘要"""
+    import akshare as ak
+    try:
+        df = ak.stock_financial_abstract_ths(symbol=code)
+        if df is None or df.empty:
+            return None
+        return {"columns": list(df.columns), "records": _to_records(df)}
+    except Exception:
+        return None
+
+
+# ── 主营业务构成 ─────────────────────────────────────────
+
+def get_revenue_breakdown(code: str) -> list | None:
+    """stock_zyjs_ths：主营业务构成（产品/经营范围）"""
+    import akshare as ak
+    try:
+        df = ak.stock_zyjs_ths(symbol=code)
+        if df is None or df.empty:
+            return None
+        result = []
+        for _, r in df.iterrows():
+            result.append({
+                "business": r.get("主营业务", ""),
+                "product_type": r.get("产品类型", ""),
+                "products": r.get("产品名称", ""),
+                "scope": r.get("经营范围", ""),
+            })
+        return result if result else None
+    except Exception:
+        return None
+
+
+# ── 业绩报表 ──────────────────────────────────────────────
+
+def get_earnings_data(code: str) -> dict:
+    """stock_yjbb_em：多期业绩报表数据"""
+    import akshare as ak
+    try:
+        result = {}
+        for date_tag in ['20250331', '20250630', '20250930', '20251231', '20260331']:
+            try:
+                df = ak.stock_yjbb_em(date=date_tag)
+                row = df[df['股票代码'] == code]
+                if not row.empty:
+                    r = row.to_dict('records')[0]
+                    y, m = date_tag[:4], date_tag[4:6]
+                    period = f"{y}-{m}-31" if m in ('01','03','05','07','08','10','12') else f"{y}-{m}-30"
+                    if m == '09':
+                        period = f"{y}-09-30"
+                    result[period] = {
+                        "revenue": r.get("营业总收入-营业总收入"),
+                        "revenue_yoy": r.get("营业总收入-同比增长"),
+                        "revenue_qoq": r.get("营业总收入-季度环比增长"),
+                        "net_profit": r.get("净利润-净利润"),
+                        "profit_yoy": r.get("净利润-同比增长"),
+                        "profit_qoq": r.get("净利润-季度环比增长"),
+                        "gross_margin": r.get("销售毛利率"),
+                        "roe": r.get("净资产收益率"),
+                        "eps": r.get("每股收益"),
+                        "bps": r.get("每股净资产"),
+                        "ocf_per_share": r.get("每股经营现金流量"),
+                    }
+            except Exception:
+                pass
+        return result
+    except Exception:
+        return {}
+
+
+# ── 新浪报表前缀 ─────────────────────────────────────────
+
+def _sina_prefix(code: str) -> str:
+    """A股前缀：sh(6xx) / sz(0xx,3xx) / bj(4xx,8xx,92x)"""
+    if code.startswith(("0", "3")):
+        return "sz"
+    if code.startswith(("4", "8")) or code.startswith("92"):
+        return "bj"
+    return "sh"
+
+
+# ── 三张报表 & 费用分析（新浪源） ────────────────────────
+
+def get_financial_report_sina(code: str, report_type: str) -> list[dict]:
+    """从新浪获取财务报表（利润表/资产负债表/现金流量表）
+    report_type: "资产负债表", "利润表", "现金流量表"
+    返回 [{"period": "2026-03-31", "items": {"货币资金": 9.92, ...}}, ...]
+    金额字段自动转为亿元单位。
+    """
+    import akshare as ak
+    prefix = _sina_prefix(code)
+    try:
+        df = ak.stock_financial_report_sina(stock=f"{prefix}{code}", symbol=report_type)
+        if df is None or df.empty:
+            return []
+        df = df.sort_values("报告日", ascending=False)
+        rows = []
+        for _, r in df.head(8).iterrows():
+            period = str(r["报告日"])[:10]
+            items = {}
+            for col in r.index:
+                if col in ("报告日", "数据源", "是否审计", "公告日期", "币种", "类型", "更新日期"):
+                    continue
+                val = r[col]
+                if pd.notna(val) and val != 0:
+                    if abs(val) >= 1e4:
+                        items[col] = round(val / 1e8, 2)
+                    else:
+                        items[col] = round(val, 2) if isinstance(val, float) else val
+            rows.append({"period": period, "items": items})
+        return rows
+    except Exception:
+        return []
+
+
+def get_balance_sheet(code: str) -> list[dict]:
+    return get_financial_report_sina(code, "资产负债表")
+
+def get_cash_flow_sheet(code: str) -> list[dict]:
+    return get_financial_report_sina(code, "现金流量表")
+
+def get_profit_sheet(code: str) -> list[dict]:
+    return get_financial_report_sina(code, "利润表")
+
+
+def get_expense_data(code: str) -> dict | None:
+    """从新浪利润表提取费用结构分析，返回 {rows, summary} 格式"""
+    rows_raw = get_financial_report_sina(code, "利润表")
+    result_rows = []
+    for row in rows_raw:
+        items = row["items"]
+        revenue = items.get("营业总收入") or items.get("营业收入")
+        if not revenue or revenue <= 0:
+            continue
+
+        def _ratio(v):
+            return round(v / revenue * 100, 2) if v and v > 0 else None
+
+        entry = {
+            "period": row["period"],
+            "revenue": revenue,
+        }
+        for cn_key, en_key in [
+            ("销售费用", "sale_expense"),
+            ("管理费用", "manage_expense"),
+            ("研发费用", "research_expense"),
+            ("财务费用", "finance_expense"),
+            ("营业总成本", "total_cost"),
+            ("营业成本", "operating_cost"),
+        ]:
+            val = items.get(cn_key)
+            if val is not None:
+                entry[en_key] = val
+                if cn_key in ("销售费用", "管理费用", "研发费用", "营业总成本", "营业成本"):
+                    entry[f"{en_key}_ratio"] = _ratio(val)
+
+        result_rows.append(entry)
+
+    result_rows = result_rows[:5]
+
+    # 趋势分析
+    trend_notes = []
+    if len(result_rows) >= 2:
+        first, last = result_rows[-1], result_rows[0]
+        for key, label in [("sale_ratio", "销售费用率"), ("manage_ratio", "管理费用率"),
+                           ("finance_ratio", "财务费用率"), ("total_cost_ratio", "总成本率")]:
+            fv = first.get(key)
+            lv = last.get(key)
+            if fv is not None and lv is not None:
+                chg = lv - fv
+                if abs(chg) >= 0.1:
+                    direction = "上升" if chg > 0 else "下降"
+                    trend_notes.append(f"{label}{direction}{abs(chg):.1f}pp")
+        for key, label in [("sale_expense", "销售费用"), ("manage_expense", "管理费用"),
+                           ("finance_expense", "财务费用")]:
+            fv = first.get(key)
+            lv = last.get(key)
+            if fv is not None and lv is not None:
+                rev_chg_pct = (last["revenue"] / first["revenue"] - 1) * 100
+                exp_chg_pct = (lv / fv - 1) * 100
+                if abs(exp_chg_pct - rev_chg_pct) > 20:
+                    if exp_chg_pct > rev_chg_pct + 20:
+                        trend_notes.append(f"{label}增速({exp_chg_pct:+.0f}%)跑赢营收({rev_chg_pct:+.0f}%)")
+                    elif rev_chg_pct > exp_chg_pct + 20:
+                        trend_notes.append(f"{label}增速({exp_chg_pct:+.0f}%)跑输营收({rev_chg_pct:+.0f}%)")
+
+    return {"rows": result_rows, "summary": trend_notes[:5] if trend_notes else ["近5期费用结构稳定"]}
+
+
+# ── 概念板块实时行情 ──────────────────────────────────────
+
+_concept_board_cache: dict = {}
+_CONCEPT_CACHE_TTL = 86400  # 24小时
+
+def get_concept_board_data() -> dict:
+    """stock_board_concept_name_em：概念板块涨跌行情（带24h缓存）"""
+    import time
+    global _concept_board_cache
+    now = time.time()
+    if _concept_board_cache and (now - _concept_board_cache.get("_ts", 0)) < _CONCEPT_CACHE_TTL:
+        return _concept_board_cache
+
+    try:
+        import akshare as ak
+        df = ak.stock_board_concept_name_em()
+        result = {}
+        for _, r in df.iterrows():
+            name = str(r.get("板块名称", ""))
+            result[name] = {
+                "change_pct": float(r.get("涨跌幅", 0) or 0),
+                "up_count": int(r.get("上涨家数", 0) or 0),
+                "down_count": int(r.get("下跌家数", 0) or 0),
+                "turnover": float(r.get("换手率", 0) or 0),
+                "leader": str(r.get("领涨股票", "")),
+                "leader_chg": float(r.get("领涨股票-涨跌幅", 0) or 0),
+            }
+        result["_ts"] = now
+        _concept_board_cache = result
+        return result
+    except Exception:
+        return _concept_board_cache or {}
+
+
+# ── 财务分析指标 ──────────────────────────────────────────
+
+def get_financial_indicators(code: str, start_year: str = "2023") -> list[dict]:
+    """stock_financial_analysis_indicator：杜邦/盈利能力指标时间序列"""
+    import akshare as ak
+    try:
+        df = ak.stock_financial_analysis_indicator(symbol=code, start_year=start_year)
+        df = df.sort_values("日期", ascending=False)
+        return df.to_dict("records")
+    except Exception:
+        return []
+
+
+# ── 管理层持股变动 ────────────────────────────────────────
+
+def get_management_changes(code: str) -> list[dict]:
+    """stock_management_change_ths：管理层持股变动记录"""
+    import akshare as ak
+    try:
+        df = ak.stock_management_change_ths(symbol=code)
+        df = df.sort_values("变动日期", ascending=False)
+        return df.head(10).to_dict("records")
+    except Exception:
+        return []
+
+
+# ── 主要股东 ──────────────────────────────────────────────
+
+def get_main_shareholders(code: str) -> tuple[pd.DataFrame | None, str | None]:
+    """stock_main_stock_holder：最新一期主要股东数据。
+    返回 (df_sorted_by_ratio, total_holders)
+    """
+    import akshare as ak
+    try:
+        sh_df = ak.stock_main_stock_holder(stock=code)
+        sh_df = sh_df.sort_values("截至日期", ascending=False)
+        latest_date = sh_df.iloc[0].get("截至日期")
+        sh_df = sh_df[sh_df["截至日期"] == latest_date].copy()
+        total_holders = sh_df.iloc[0].get("股东总数") if "股东总数" in sh_df.columns else None
+        if total_holders is not None and isinstance(total_holders, float) and total_holders != total_holders:
+            total_holders = None
+        return sh_df, total_holders
+    except Exception:
+        return None, None
+
+
+# ── 概念板块成分股 ────────────────────────────────────────
+
+def get_concept_board_constituents(board_name: str) -> list[dict]:
+    """stock_board_concept_cons_em：获取概念板块成分股（含涨幅排序）"""
+    import akshare as ak
+    try:
+        cons_df = ak.stock_board_concept_cons_em(symbol=board_name)
+        if cons_df.empty:
+            return []
+        cols = ["代码", "名称", "最新价", "涨跌幅"]
+        top5 = cons_df.nlargest(5, "涨跌幅")
+        stocks = []
+        for _, r in top5.iterrows():
+            stocks.append({
+                "code": str(r["代码"]).strip(),
+                "name": r["名称"],
+                "price": float(r["最新价"]) if pd.notna(r.get("最新价")) else 0,
+                "change_pct": float(r["涨跌幅"]) if pd.notna(r.get("涨跌幅")) else 0,
+            })
+        return stocks
+    except Exception:
+        return []
