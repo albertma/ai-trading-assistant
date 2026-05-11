@@ -22,15 +22,15 @@
                             <el-table-column prop="label" label="市场" width="80" />
                             <el-table-column prop="count" label="数量" width="60" />
                             <el-table-column label="市值" width="130">
-                                <template #default="{ row }">¥{{ fmt(row.value) }}</template>
+                                <template #default="{ row }">¥{{ fmt(row.value_cny) }}</template>
                             </el-table-column>
                             <el-table-column label="盈亏" width="130">
                                 <template #default="{ row }">
-                                    <span :style="{ color: row.profit >= 0 ? '#f56c6c' : '#67c23a' }">{{ row.profit >= 0 ? '+' : '' }}¥{{ fmt(row.profit) }}</span>
+                                    <span :style="{ color: row.profit_cny >= 0 ? '#f56c6c' : '#67c23a' }">{{ row.profit_cny >= 0 ? '+' : '' }}¥{{ fmt(row.profit_cny) }}</span>
                                 </template>
                             </el-table-column>
                             <el-table-column label="占比" width="80">
-                                <template #default="{ row }">{{ totalValue > 0 ? (row.value / totalValue * 100).toFixed(1) : 0 }}%</template>
+                                <template #default="{ row }">{{ totalValue > 0 ? (row.value_cny / totalValue * 100).toFixed(1) : 0 }}%</template>
                             </el-table-column>
                         </el-table>
                     </el-tab-pane>
@@ -43,11 +43,11 @@
                             <el-table-column prop="industry" label="行业" width="110" />
                             <el-table-column prop="count" label="数量" width="60" />
                             <el-table-column label="市值" width="130">
-                                <template #default="{ row }">¥{{ fmt(row.value) }}</template>
+                                <template #default="{ row }">¥{{ fmt(row.value_cny) }}</template>
                             </el-table-column>
                             <el-table-column label="盈亏" width="130">
                                 <template #default="{ row }">
-                                    <span :style="{ color: row.profit >= 0 ? '#f56c6c' : '#67c23a' }">{{ row.profit >= 0 ? '+' : '' }}¥{{ fmt(row.profit) }}</span>
+                                    <span :style="{ color: row.profit_cny >= 0 ? '#f56c6c' : '#67c23a' }">{{ row.profit_cny >= 0 ? '+' : '' }}¥{{ fmt(row.profit_cny) }}</span>
                                 </template>
                             </el-table-column>
                         </el-table>
@@ -61,11 +61,11 @@
                             <el-table-column prop="theme" label="主题" width="90" />
                             <el-table-column prop="count" label="数量" width="60" />
                             <el-table-column label="市值" width="130">
-                                <template #default="{ row }">¥{{ fmt(row.value) }}</template>
+                                <template #default="{ row }">¥{{ fmt(row.value_cny) }}</template>
                             </el-table-column>
                             <el-table-column label="盈亏" width="130">
                                 <template #default="{ row }">
-                                    <span :style="{ color: row.profit >= 0 ? '#f56c6c' : '#67c23a' }">{{ row.profit >= 0 ? '+' : '' }}¥{{ fmt(row.profit) }}</span>
+                                    <span :style="{ color: row.profit_cny >= 0 ? '#f56c6c' : '#67c23a' }">{{ row.profit_cny >= 0 ? '+' : '' }}¥{{ fmt(row.profit_cny) }}</span>
                                 </template>
                             </el-table-column>
                         </el-table>
@@ -152,12 +152,12 @@ const overviewCards = computed(() => {
     const t = analysisData.value?.total || {}
     return [
         { label: '持仓总数', value: `${t.count} 只`, color: '#409eff' },
-        { label: '总成本', value: `¥${fmt(t.cost)}`, color: '#606266' },
-        { label: '总市值', value: `¥${fmt(t.value)}`, color: '#606266' },
-        { label: '总盈亏', value: `${(t.profit||0) >= 0 ? '+' : ''}¥${fmt(t.profit)} (${t.profit_pct}%)`, color: (t.profit||0) >= 0 ? '#f56c6c' : '#67c23a' },
+        { label: '总成本', value: `¥${fmt(t.cost_cny)}`, color: '#606266' },
+        { label: '总市值', value: `¥${fmt(t.value_cny)}`, color: '#606266' },
+        { label: '总盈亏', value: `${(t.profit_cny||0) >= 0 ? '+' : ''}¥${fmt(t.profit_cny)} (${t.profit_pct}%)`, color: (t.profit_cny||0) >= 0 ? '#f56c6c' : '#67c23a' },
     ]
 })
-const totalValue = computed(() => analysisData.value?.total?.value || 1)
+const totalValue = computed(() => analysisData.value?.total?.value_cny || 1)
 const marketList = computed(() => Object.values(analysisData.value?.market_breakdown || {}))
 const industryList = computed(() => analysisData.value?.industry_distribution || [])
 const themeList = computed(() => analysisData.value?.theme_distribution || [])
@@ -214,7 +214,7 @@ function initCharts() {
     if (marketChartRef.value) {
         if (marketChart) marketChart.dispose()
         marketChart = echarts.init(marketChartRef.value)
-        const opt = makePieOption(marketList.value, 'label', 'value')
+        const opt = makePieOption(marketList.value, 'label', 'value_cny')
         if (opt) { marketChart.setOption(opt) }
         else { marketChart.setOption({ title: { text: '暂无数据', left: 'center', top: 'center' } }) }
     }
@@ -222,7 +222,7 @@ function initCharts() {
     if (industryChartRef.value) {
         if (industryChart) industryChart.dispose()
         industryChart = echarts.init(industryChartRef.value)
-        const opt = makePieOption(industryList.value, 'industry', 'value')
+        const opt = makePieOption(industryList.value, 'industry', 'value_cny')
         if (opt) { industryChart.setOption(opt) }
         else { industryChart.setOption({ title: { text: '暂无数据', left: 'center', top: 'center' } }) }
     }
@@ -230,7 +230,7 @@ function initCharts() {
     if (themeChartRef.value) {
         if (themeChart) themeChart.dispose()
         themeChart = echarts.init(themeChartRef.value)
-        const opt = makePieOption(themeList.value, 'theme', 'value')
+        const opt = makePieOption(themeList.value, 'theme', 'value_cny')
         if (opt) { themeChart.setOption(opt) }
         else { themeChart.setOption({ title: { text: '暂无数据', left: 'center', top: 'center' } }) }
     }

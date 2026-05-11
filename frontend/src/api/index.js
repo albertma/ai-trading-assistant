@@ -43,6 +43,20 @@ export function updatePosition(code, data) {
 export function deletePosition(code) {
     return api.delete(`/positions/${code}`)
 }
+
+// ========== 交易日志 ==========
+export function getTrades(code) {
+    return api.get(`/positions/${code}/trades`)
+}
+export function addTrade(code, data) {
+    return api.post(`/positions/${code}/trades`, data)
+}
+export function updateTrade(code, tradeId, data) {
+    return api.put(`/positions/${code}/trades/${tradeId}`, data)
+}
+export function deleteTrade(code, tradeId) {
+    return api.delete(`/positions/${code}/trades/${tradeId}`)
+}
 export function getPositionAnalysis() {
     return api.get('/positions/analysis')
 }

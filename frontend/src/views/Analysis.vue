@@ -163,11 +163,11 @@
 
             <!-- Tab 3: 基本面 -->
             <el-tab-pane label="📊 基本面" name="fundamental">
-                <div v-if="fundLoading" style="text-align:center;padding:40px;"><el-icon class="is-loading" :size="32"><Loading /></el-icon></div>
-                <template v-else-if="fundData">
+                <div v-if="expenseLoading" style="text-align:center;padding:40px;"><el-icon class="is-loading" :size="32"><Loading /></el-icon></div>
+                <template v-else-if="expenseData">
                     <el-card shadow="hover" style="margin-bottom:16px;">
                         <template #header><b>📋 财务摘要（最近12期）</b></template>
-                        <el-table :data="fundData.financial_summary?.records || []" border size="small" style="width:100%"
+                        <el-table :data="expenseData.financial_summary?.records || []" border size="small" style="width:100%"
                             :default-sort="{ prop: '报告期', order: 'descending' }">
                             <el-table-column prop="报告期" label="报告期" width="110" sortable />
                             <el-table-column prop="营业总收入" label="营收(亿)" width="90">
@@ -446,7 +446,13 @@
                             </el-table-column>
                             <el-table-column label="财务费用率" width="85">
                                 <template #default="{ row }">
-                                    <span v-if="row.finance_ratio != null" :style="{ color: (row.finance_ratio||0) > 1 ? '#e6a23c' : '#909399' }">{{ row.finance_ratio }}%</span>
+                                    <span v-if="row.finance_expense_ratio != null" :style="{ color: (row.finance_expense_ratio||0) > 1 ? '#e6a23c' : '#909399' }">{{ row.finance_expense_ratio }}%</span>
+                                    <span v-else style="color:#c0c4cc;">--</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="总费用率" width="80">
+                                <template #default="{ row }">
+                                    <span v-if="row.total_expense_ratio != null" style="font-weight:bold;">{{ row.total_expense_ratio }}%</span>
                                     <span v-else style="color:#c0c4cc;">--</span>
                                 </template>
                             </el-table-column>

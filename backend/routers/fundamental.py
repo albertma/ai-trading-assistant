@@ -1172,6 +1172,10 @@ def _extract_stages(text: str, companies: list[dict]) -> list[dict]:
 @router.get("/{code}")
 def fundamental_analysis(code: str):
     """基本面综合：财务摘要 + 收入构成 + 行业前瞻"""
+    import time, threading
+    
+    _start = time.time()
+    
     # 先从分析模块获取股票名称
     from backend.routers.analysis import _get_stock_list
     stock_map = _get_stock_list()
@@ -1180,7 +1184,6 @@ def fundamental_analysis(code: str):
     # 获取财务摘要
     fin = _get_financial_summary(code)
     if fin and fin.get("records"):
-        # 只保留最近5期
         fin["records"] = fin["records"][-5:]
 
     # 获取收入构成
@@ -1200,25 +1203,57 @@ def fundamental_analysis(code: str):
         pass
 
     if not sector or sector == "--":
-        # CSV兜底
         sector = get_industry_from_code(code, 5)
 
-    # 行业前瞻
-    industry = _get_industry_data(sector)
+    # 行业前瞻（带 25s 超时，不给就跑简单版）
+    industry = None
+    cycle = None
+    timeout_ex = threading.Event()
     
-    # 行业景气周期 + 供需矛盾分析 + 量化预测
-    cycle = _analyze_industry_cycle(sector, industry)
-    if industry and cycle:
-        industry["cycle_analysis"] = cycle
+    def _fetch_industry():
+        nonlocal industry
+        try:
+            industry = _get_industry_data(sector)
+        except Exception:
+            industry = None
+    
+    t = threading.Thread(target=_fetch_industry, daemon=True)
+    t.start()
+    t.join(timeout=25)
+    if t.is_alive():
+        timeout_ex.set()
+        industry = None
+    
+    elapsed = time.time() - _start
+    
+    # 行业景气周期（有 industry 才分析，单独超时 15s）
+    if industry and not timeout_ex.is_set():
+        cycle = None
+        def _fetch_cycle():
+            nonlocal cycle
+            try:
+                cycle = _analyze_industry_cycle(sector, industry)
+            except Exception:
+                cycle = None
+        tc = threading.Thread(target=_fetch_cycle, daemon=True)
+        tc.start()
+        tc.join(timeout=15)
+        if tc.is_alive():
+            industry["cycle_analysis"] = None  # 不给
+        elif industry and cycle:
+            industry["cycle_analysis"] = cycle
 
-    return {
+    result = {
         "code": code,
         "name": name,
         "sector": sector,
         "financial_summary": fin,
         "revenue_breakdown": revenue,
         "industry_outlook": industry,
+        "_elapsed": round(elapsed, 2),
+        "_industry_timeout": timeout_ex.is_set(),
     }
+    return result
 
 
 @router.get("/{code}/supply_chain")

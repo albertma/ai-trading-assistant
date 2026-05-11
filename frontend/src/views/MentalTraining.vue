@@ -41,7 +41,8 @@
             <template #header>
                 <b>📊 训练历史</b>
             </template>
-            <el-table :data="history" border size="small" style="width:100%;" v-if="history.length">
+            <el-table :data="history" border size="small" style="width:100%;" v-if="history.length"
+                @row-click="showHistoryDetail" :row-class-name="'clickable-row'">
                 <el-table-column label="日期" width="100" prop="training_date" />
                 <el-table-column label="模型" width="120" prop="model_name" />
                 <el-table-column label="预测" min-width="250">
@@ -68,11 +69,69 @@
             </el-table>
             <el-empty v-else description="暂无训练历史" />
         </el-card>
+
+        <!-- 历史记录详情弹窗 -->
+        <el-dialog v-model="detailVisible" title="📋 训练详情" width="700px" top="5vh" :close-on-click-modal="false">
+            <div v-if="detailLoading" style="text-align:center;padding:30px;">
+                <el-icon class="is-loading" size="24"><Loading /></el-icon>
+                <p style="margin-top:10px;color:#909399;">加载中...</p>
+            </div>
+            <template v-else-if="detailRecord">
+                <div style="margin-bottom:16px;">
+                    <el-tag size="small" type="success">{{ detailRecord.model_name }}</el-tag>
+                    <el-tag size="small" type="info" style="margin-left:6px;">{{ detailRecord.training_date }}</el-tag>
+                    <el-tag v-if="detailRecord.accuracy" size="small"
+                        :type="detailRecord.accuracy === '准确' ? 'success' : detailRecord.accuracy === '部分准确' ? 'warning' : 'danger'"
+                        style="margin-left:6px;">
+                        {{ detailRecord.accuracy === '准确' ? '✅' : detailRecord.accuracy === '部分准确' ? '🟡' : '❌' }}
+                        {{ detailRecord.accuracy }}
+                    </el-tag>
+                </div>
+
+                <el-divider content-position="left">💬 训练回答</el-divider>
+                <div class="markdown-body" v-html="renderMarkdown(detailRecord.training_answer)"></div>
+
+                <template v-if="detailRecord.market_context">
+                    <el-divider content-position="left">📊 市场背景</el-divider>
+                    <div style="font-size:13px;color:#606266;white-space:pre-wrap;">{{ detailRecord.market_context }}</div>
+                </template>
+
+                <div v-if="detailRecord.prediction">
+                    <el-divider content-position="left">🔮 预测</el-divider>
+                    <div class="prediction-box" style="margin-top:0;">
+                        <p style="margin:0;">{{ detailRecord.prediction }}</p>
+                    </div>
+                </div>
+
+                <!-- 可编辑区域 -->
+                <el-divider content-position="left">📌 验证结果</el-divider>
+                <div style="display:flex;gap:8px;align-items:flex-start;">
+                    <el-select v-model="editAccuracy" placeholder="准确度" size="small" style="width:130px;">
+                        <el-option label="准确 ✅" value="准确" />
+                        <el-option label="部分准确" value="部分准确" />
+                        <el-option label="不准确 ❌" value="不准确" />
+                    </el-select>
+                    <el-input v-model="editResult" placeholder="实际走势如何？" size="small" style="flex:1;" />
+                </div>
+
+                <el-divider content-position="left">💡 反思</el-divider>
+                <el-input v-model="editReflection" type="textarea" :rows="3"
+                    placeholder="对这次训练/预测的反思..." size="small" />
+
+                <div style="text-align:right;margin-top:16px;">
+                    <el-button size="small" @click="detailVisible = false">取消</el-button>
+                    <el-button size="small" type="primary" @click="saveDetailEdit" :loading="detailSaving">
+                        💾 保存
+                    </el-button>
+                </div>
+            </template>
+        </el-dialog>
     </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import axios from 'axios'
 
 const API_BASE = '/api/v1/mental'
@@ -82,6 +141,13 @@ const history = ref([])
 const refreshing = ref(false)
 const verifyResult = ref('')
 const verifyAccuracy = ref('')
+const detailVisible = ref(false)
+const detailRecord = ref(null)
+const detailLoading = ref(false)
+const detailSaving = ref(false)
+const editResult = ref('')
+const editAccuracy = ref('')
+const editReflection = ref('')
 
 onMounted(async () => {
     await loadTraining()
@@ -124,6 +190,53 @@ async function submitVerification() {
     } catch { /* ignore */ }
 }
 
+async function showHistoryDetail(row) {
+    detailVisible.value = true
+    detailLoading.value = true
+    detailRecord.value = null
+    try {
+        const { data } = await axios.get(`${API_BASE}/daily-training/${row.id}`)
+        detailRecord.value = data
+        // 初始化编辑字段
+        editResult.value = data.next_day_result || ''
+        editAccuracy.value = data.accuracy || ''
+        editReflection.value = data.reflection || ''
+    } catch (e) {
+        console.error('加载训练详情失败', e)
+    } finally {
+        detailLoading.value = false
+    }
+}
+
+async function saveDetailEdit() {
+    if (!detailRecord.value?.id) return
+    detailSaving.value = true
+    try {
+        await axios.put(`${API_BASE}/daily-training/${detailRecord.value.id}/verify`, null, {
+            params: {
+                next_day_result: editResult.value || '',
+                accuracy: editAccuracy.value || '',
+                reflection: editReflection.value || '',
+            }
+        })
+        ElMessage.success('保存成功 ✅')
+        // 刷新详情
+        const { data } = await axios.get(`${API_BASE}/daily-training/${detailRecord.value.id}`)
+        detailRecord.value = data
+        // 刷新历史列表
+        await loadHistory()
+        // 如果编辑的是今日训练，也刷新今日
+        if (training.value?.id === detailRecord.value.id) {
+            await loadTraining()
+        }
+    } catch (e) {
+        console.error('保存失败', e)
+        ElMessage.error('保存失败')
+    } finally {
+        detailSaving.value = false
+    }
+}
+
 function renderMarkdown(text) {
     if (!text) return ''
     let html = text
@@ -162,4 +275,6 @@ function renderMarkdown(text) {
 .prediction-box p { font-size: 13px; color: #b8860b; }
 .verified-result { margin-top: 8px; display: flex; align-items: center; }
 .pred-text { font-size: 12px; color: #606266; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; max-width: 350px; }
+.clickable-row { cursor: pointer; }
+.clickable-row:hover td { background-color: #f5f7fa; }
 </style>

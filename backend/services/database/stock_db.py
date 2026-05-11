@@ -219,6 +219,19 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_sc_date ON sector_cycles(date);
         CREATE INDEX IF NOT EXISTS idx_sc_sector ON sector_cycles(sector);
+        CREATE TABLE IF NOT EXISTS sector_indices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            sector TEXT NOT NULL,
+            index_value REAL,
+            daily_return REAL,
+            total_mv REAL,
+            stock_count INTEGER,
+            updated_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(date, sector)
+        );
+        CREATE INDEX IF NOT EXISTS idx_si_date ON sector_indices(date);
+        CREATE INDEX IF NOT EXISTS idx_si_sector ON sector_indices(sector);
         CREATE TABLE IF NOT EXISTS sector_industry_cache (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT NOT NULL,
@@ -234,6 +247,18 @@ def init_db():
             UNIQUE(date, sector)
         );
         CREATE INDEX IF NOT EXISTS idx_sic_date ON sector_industry_cache(date);
+        CREATE TABLE IF NOT EXISTS trade_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            direction TEXT NOT NULL CHECK(direction IN ('买入','卖出')),
+            trade_date TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            price REAL NOT NULL,
+            total REAL NOT NULL,
+            note TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_tl_code ON trade_logs(code);
     """)
     conn.commit()
     # 迁移：已有数据库加 snapshot_notes 列

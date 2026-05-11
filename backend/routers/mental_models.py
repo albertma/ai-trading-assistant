@@ -546,6 +546,19 @@ def get_training_history(limit: int = Query(30, le=100)):
     return [dict(r) for r in rows]
 
 
+@router.get("/daily-training/{training_id}")
+def get_training_detail(training_id: int):
+    """获取单条训练记录完整详情"""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM model_trainings WHERE id = ?", (training_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="训练记录不存在")
+    return dict(row)
+
+
 @router.put("/daily-training/{training_id}/verify")
 def verify_training(training_id: int, next_day_result: str = "", accuracy: str = "", reflection: str = ""):
     """验证前一日训练的预测结果"""
@@ -816,7 +829,7 @@ def get_sector_stocks(
             "close": float(row["close"]) if pd.notna(row.get("close")) else None,
             "change_pct": float(row["change_pct"]) if pd.notna(row.get("change_pct")) else None,
             "change": float(row["change"]) if pd.notna(row.get("change")) else None,
-            "amount": float(row["amount"]) if pd.notna(row.get("amount")) else None,
+            "amount": round(float(row["amount"]) / 100_000_000, 2) if pd.notna(row.get("amount")) else None,
             "market_cap": float(row["market_cap"]) if pd.notna(row.get("market_cap")) else None,
             "turnover": float(row["turnover"]) if pd.notna(row.get("turnover")) else None,
             "pe": float(row["pe"]) if pd.notna(row.get("pe")) else None,
@@ -1203,4 +1216,62 @@ def _summarize_cycles(sectors: list) -> dict:
         "focus_sectors": focus_sectors,
         "warnings": warnings,
         "themes": themes,
+    }
+
+
+# -----------------------------------------------------------
+# API: 板块指数（市值加权，逐日链式累加，基准1000）
+# -----------------------------------------------------------
+
+@router.post("/sector-indices/refresh")
+def refresh_sector_indices_api(
+    date_str: str = Query(None, alias="date"),
+    full_rebuild: bool = Query(False, alias="full")
+):
+    """刷新板块指数数据"""
+    from backend.services.tradingmgt.sector_index_service import refresh_sector_indices
+
+    if full_rebuild:
+        result = refresh_sector_indices(target_date=None)
+    else:
+        target = date_str or date.today().isoformat()
+        result = refresh_sector_indices(target_date=target)
+    return result
+
+
+@router.get("/sector-indices")
+def get_sector_indices_api(
+    sector: str = Query(None),
+    start_date: str = Query(None, alias="start"),
+    end_date: str = Query(None, alias="end"),
+    limit: int = Query(5000, le=10000),
+):
+    """查询板块指数历史（用于前端绘制走势图）"""
+    from backend.services.tradingmgt.sector_index_service import get_sector_indices, get_base_date
+
+    data = get_sector_indices(
+        sector=sector,
+        start_date=start_date,
+        end_date=end_date,
+        limit_dates=limit,
+    )
+    base_date = get_base_date()
+
+    # 按板块分组
+    sectors_map: dict[str, list[dict]] = {}
+    for item in data:
+        sec = item["sector"]
+        if sec not in sectors_map:
+            sectors_map[sec] = []
+        sectors_map[sec].append({
+            "date": item["date"],
+            "index_value": item["index_value"],
+            "daily_return": item["daily_return"],
+        })
+
+    return {
+        "sectors": sectors_map,
+        "sector_names": sorted(sectors_map.keys()),
+        "base_date": base_date,
+        "total_records": len(data),
     }

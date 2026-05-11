@@ -202,8 +202,15 @@ def get_expense_data(code: str) -> dict | None:
             val = items.get(cn_key)
             if val is not None:
                 entry[en_key] = val
-                if cn_key in ("销售费用", "管理费用", "研发费用", "营业总成本", "营业成本"):
+                # 所有费用类型都算比率
+                if cn_key in ("销售费用", "管理费用", "研发费用", "财务费用", "营业总成本", "营业成本"):
                     entry[f"{en_key}_ratio"] = _ratio(val)
+
+        # 总费用占比 = 销售+管理+研发+财务 之和 / 营收
+        total_exp = sum(filter(None, [entry.get("sale_expense"), entry.get("manage_expense"),
+                                       entry.get("research_expense"), entry.get("finance_expense")]))
+        if total_exp and total_exp > 0:
+            entry["total_expense_ratio"] = round(total_exp / revenue * 100, 2)
 
         result_rows.append(entry)
 
@@ -213,8 +220,8 @@ def get_expense_data(code: str) -> dict | None:
     trend_notes = []
     if len(result_rows) >= 2:
         first, last = result_rows[-1], result_rows[0]
-        for key, label in [("sale_ratio", "销售费用率"), ("manage_ratio", "管理费用率"),
-                           ("finance_ratio", "财务费用率"), ("total_cost_ratio", "总成本率")]:
+        for key, label in [("sale_expense_ratio", "销售费用率"), ("manage_expense_ratio", "管理费用率"),
+                           ("finance_expense_ratio", "财务费用率"), ("total_cost_ratio", "总成本率")]:
             fv = first.get(key)
             lv = last.get(key)
             if fv is not None and lv is not None:
@@ -340,3 +347,129 @@ def get_concept_board_constituents(board_name: str) -> list[dict]:
         return stocks
     except Exception:
         return []
+
+
+# ── 港股行情 ──────────────────────────────────────────────
+
+def get_hk_stock_daily_price(code: str) -> float | None:
+    """stock_hk_daily：获取港股最近交易日收盘价（不复权），自动缓存到 kline_daily"""
+    # 先查缓存
+    from backend.services.database.stock_db import get_db
+    conn = get_db()
+    row = conn.execute(
+        "SELECT close, date FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT 1",
+        (f"hk_{code}",)
+    ).fetchone()
+    if row:
+        conn.close()
+        return row[0]
+
+    # 从 akshare 拉取
+    import akshare as ak
+    try:
+        df = ak.stock_hk_daily(symbol=code)
+        if df is not None and not df.empty:
+            latest_close = float(df.iloc[-1]["close"])
+            # 写入 kline_daily（全量）
+            for _, r in df.iterrows():
+                conn.execute(
+                    "INSERT OR REPLACE INTO kline_daily (code, date, open, close, high, low, volume) VALUES (?,?,?,?,?,?,?)",
+                    (f"hk_{code}", str(r["date"])[:10],
+                     float(r["open"]), float(r["close"]),
+                     float(r["high"]), float(r["low"]),
+                     float(r["volume"]))
+                )
+            conn.commit()
+            conn.close()
+            return latest_close
+    except Exception:
+        pass
+    conn.close()
+    return None
+
+
+def get_hk_stock_prices_batch(codes: list[str]) -> dict[str, float]:
+    """批量获取港股最近收盘价（复用单只查询，自带缓存）"""
+    result = {}
+    for code in codes:
+        p = get_hk_stock_daily_price(code)
+        if p is not None:
+            result[code] = p
+    return result
+
+
+def get_hk_stock_name(code: str) -> str | None:
+    """stock_hk_spot：获取港股中文名称（实时行情接口）"""
+    import akshare as ak
+    try:
+        df = ak.stock_hk_spot()
+        if df is None or df.empty:
+            return None
+        match = df[df["代码"] == code]
+        if not match.empty:
+            return str(match.iloc[0].get("中文名称", ""))
+    except Exception:
+        pass
+    return None
+
+
+# ── 美股行情 ──────────────────────────────────────────────
+
+def get_us_stock_daily_price(code: str) -> float | None:
+    """stock_us_daily：获取美股最近交易日收盘价（不复权），自动缓存到 kline_daily"""
+    # 先查缓存
+    from backend.services.database.stock_db import get_db
+    conn = get_db()
+    row = conn.execute(
+        "SELECT close, date FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT 1",
+        (f"us_{code}",)
+    ).fetchone()
+    if row:
+        conn.close()
+        return row[0]
+
+    # 从 akshare 拉取
+    import akshare as ak
+    try:
+        df = ak.stock_us_daily(symbol=code, adjust="")
+        if df is not None and not df.empty:
+            latest_close = float(df.iloc[-1]["close"])
+            # 写入 kline_daily（全量）
+            for _, r in df.iterrows():
+                conn.execute(
+                    "INSERT OR REPLACE INTO kline_daily (code, date, open, close, high, low, volume) VALUES (?,?,?,?,?,?,?)",
+                    (f"us_{code}", str(r["date"])[:10],
+                     float(r["open"]), float(r["close"]),
+                     float(r["high"]), float(r["low"]),
+                     float(r["volume"]))
+                )
+            conn.commit()
+            conn.close()
+            return latest_close
+    except Exception:
+        pass
+    conn.close()
+    return None
+
+
+def get_us_stock_prices_batch(codes: list[str]) -> dict[str, float]:
+    """批量获取美股最近收盘价（复用单只查询，自带缓存）"""
+    result = {}
+    for code in codes:
+        p = get_us_stock_daily_price(code)
+        if p is not None:
+            result[code] = p
+    return result
+
+
+def get_us_stock_name(code: str) -> str | None:
+    """stock_individual_basic_info_us_xq：获取美股中文简称"""
+    import akshare as ak
+    try:
+        df = ak.stock_individual_basic_info_us_xq(symbol=code)
+        if df is not None and not df.empty:
+            d = dict(zip(df["item"], df["value"]))
+            return d.get("org_short_name_cn") or d.get("org_name_cn") or code
+    except Exception:
+        pass
+    return code

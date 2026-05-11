@@ -159,9 +159,67 @@ def get_expense_data(code: str) -> dict | None:
     return data
 
 
+def _get_db_indicators(code: str) -> list[dict] | None:
+    """从SQLite读取全部已缓存的财务指标（按报告期）"""
+    try:
+        conn = _get_db()
+        rows = conn.execute(
+            "SELECT report_period, data_json FROM financial_data "
+            "WHERE code=? AND report_type='indicator' "
+            "ORDER BY report_period DESC",
+            (code,)
+        ).fetchall()
+        conn.close()
+        if rows:
+            import json
+            return [json.loads(r["data_json"]) for r in rows]
+        return None
+    except Exception:
+        return None
+
+
+def _save_db_indicators(code: str, data: list[dict]):
+    """逐条保存财务指标到SQLite（按报告期）"""
+    import json
+    try:
+        conn = _get_db()
+        for record in data:
+            # 日期可能是 datetime.date 对象，转字符串
+            period_raw = record.get("日期", "")
+            if not period_raw:
+                continue
+            period = str(period_raw)  # date → "2026-03-31"
+            # 深拷贝并确保所有值可 JSON 序列化
+            safe = {}
+            for k, v in record.items():
+                if isinstance(v, (int, float, str, bool)):
+                    safe[k] = v
+                elif v is None:
+                    safe[k] = None
+                elif hasattr(v, 'isoformat'):  # date/datetime
+                    safe[k] = v.isoformat()
+                else:
+                    safe[k] = str(v)
+            conn.execute(
+                "INSERT OR REPLACE INTO financial_data (code, report_period, report_type, data_json) "
+                "VALUES (?, ?, 'indicator', ?)",
+                (code, period, json.dumps(safe, ensure_ascii=False))
+            )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def get_financial_indicators(code: str, start_year: str = "2023") -> list[dict]:
-    """财务分析指标时间序列"""
-    return _ak_get_financial_indicators(code, start_year)
+    """财务分析指标时间序列（持久化SQLite缓存，按报告期保存）"""
+    cached = _get_db_indicators(code)
+    if cached:
+        return cached
+    data = _ak_get_financial_indicators(code, start_year)
+    if data:
+        _save_db_indicators(code, data)
+    return data if data else []
 
 
 def get_management_changes(code: str) -> list[dict]:

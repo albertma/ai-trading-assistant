@@ -11,10 +11,11 @@ import PositionsAnalysis from '../views/PositionsAnalysis.vue'
 import ChainManager from '../views/ChainManager.vue'
 import KnowledgeGraph from '../views/KnowledgeGraph.vue'
 import MentalModels from '../views/MentalModels.vue'
+import SectorAnalysis from '../views/SectorAnalysis.vue'
 
 const routes = [
     { path: '/', name: 'Dashboard', component: Dashboard, meta: { title: '市场概览', icon: 'DataAnalysis' } },
-    { path: '/sector-analysis', name: 'SectorAnalysis', component: () => import('../views/SectorAnalysis.vue'), meta: { title: '板块分析', icon: 'DataBoard' } },
+    { path: '/sector-analysis', name: 'SectorAnalysis', component: SectorAnalysis, meta: { title: '板块分析', icon: 'DataBoard' } },
     { path: '/watchlist', name: 'Watchlist', component: Watchlist, meta: { title: '观察池', icon: 'View' } },
     { path: '/positions', name: 'Positions', component: Positions, meta: { title: '持仓看板', icon: 'Wallet' } },
     { path: '/positions-analysis', name: 'PositionsAnalysis', component: PositionsAnalysis, meta: { title: '持仓分析', icon: 'DataBoard' } },
