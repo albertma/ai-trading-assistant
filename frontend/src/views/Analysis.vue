@@ -163,11 +163,11 @@
 
             <!-- Tab 3: 基本面 -->
             <el-tab-pane label="📊 基本面" name="fundamental">
-                <div v-if="expenseLoading" style="text-align:center;padding:40px;"><el-icon class="is-loading" :size="32"><Loading /></el-icon></div>
-                <template v-else-if="expenseData">
+                <div v-if="fundLoading" style="text-align:center;padding:40px;"><el-icon class="is-loading" :size="32"><Loading /></el-icon></div>
+                <template v-else-if="fundData">
                     <el-card shadow="hover" style="margin-bottom:16px;">
                         <template #header><b>📋 财务摘要（最近12期）</b></template>
-                        <el-table :data="expenseData.financial_summary?.records || []" border size="small" style="width:100%"
+                        <el-table :data="fundData.financial_summary?.records || []" border size="small" style="width:100%"
                             :default-sort="{ prop: '报告期', order: 'descending' }">
                             <el-table-column prop="报告期" label="报告期" width="110" sortable />
                             <el-table-column prop="营业总收入" label="营收(亿)" width="90">
@@ -428,19 +428,19 @@
                             </el-table-column>
                             <el-table-column label="销售费用率" width="85">
                                 <template #default="{ row }">
-                                    <span v-if="row.sale_ratio != null">{{ row.sale_ratio }}%</span>
+                                    <span v-if="row.sale_expense_ratio != null">{{ row.sale_expense_ratio }}%</span>
                                     <span v-else style="color:#c0c4cc;">--</span>
                                 </template>
                             </el-table-column>
                             <el-table-column label="管理费用率" width="85">
                                 <template #default="{ row }">
-                                    <span v-if="row.manage_ratio != null">{{ row.manage_ratio }}%</span>
+                                    <span v-if="row.manage_expense_ratio != null">{{ row.manage_expense_ratio }}%</span>
                                     <span v-else style="color:#c0c4cc;">--</span>
                                 </template>
                             </el-table-column>
                             <el-table-column label="研发费用率" width="85">
                                 <template #default="{ row }">
-                                    <span v-if="row.research_ratio != null">{{ row.research_ratio }}%</span>
+                                    <span v-if="row.research_expense_ratio != null">{{ row.research_expense_ratio }}%</span>
                                     <span v-else style="color:#c0c4cc;">--</span>
                                 </template>
                             </el-table-column>

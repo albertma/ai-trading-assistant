@@ -205,10 +205,19 @@ def get_industry_data(sector: str) -> dict | None:
     top_by_gain = [_row_to_stock(r) for _, r in sector_df.nlargest(5, "涨幅").iterrows()]
     top_by_mcap = [_row_to_stock(r) for _, r in sector_df.nlargest(5, "总市值").iterrows()]
 
+    # 最差5只（退潮股）
+    bottom_by_gain = [_row_to_stock(r) for _, r in sector_df.nsmallest(5, "涨幅").iterrows()]
+
     valid = sector_df[sector_df["涨幅"].notna()]
     avg_chg = float(valid["涨幅"].mean()) if not valid.empty else 0
     up_count = int((valid["涨幅"] > 0).sum())
+    down_count = int((valid["涨幅"] < 0).sum())
     total_count = int(len(valid))
+
+    # 分化程度：龙头均值 vs 最差均值
+    top_5_avg = float(valid.nlargest(5, "涨幅")["涨幅"].mean()) if len(valid) >= 5 else avg_chg
+    bottom_5_avg = float(valid.nsmallest(5, "涨幅")["涨幅"].mean()) if len(valid) >= 5 else avg_chg
+    divergence = round(top_5_avg - bottom_5_avg, 2)
 
     return {
         "sector": sector,
@@ -217,9 +226,14 @@ def get_industry_data(sector: str) -> dict | None:
         "total_sectors": total,
         "avg_change": round(avg_chg, 2),
         "up_ratio": round(up_count / total_count * 100, 1) if total_count > 0 else 0,
+        "down_ratio": round(down_count / total_count * 100, 1) if total_count > 0 else 0,
         "stock_count": total_count,
         "top_stocks": top_by_gain,
         "top_by_market_cap": top_by_mcap,
+        "bottom_stocks": bottom_by_gain,
+        "divergence": divergence,
+        "top_avg_change": round(top_5_avg, 2),
+        "bottom_avg_change": round(bottom_5_avg, 2),
     }
 
 

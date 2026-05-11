@@ -10,10 +10,11 @@ import os
 from pathlib import Path
 
 from backend.config import MARKET_DATA_DIR, CACHE_DIR, CACHE_TTL_SECONDS
-from backend.patterns import detect_patterns, detect_cup_handle
-from backend.services.db_client import get_db
 from backend.services.market_service import get_daily_history, get_ma, get_stock_news
 from backend.services.financial_service import get_financial_reports
+from backend.services.analyze.technical import TechnicalAnalyzer
+from backend.services.db_client import get_db
+from backend.patterns import detect_patterns, detect_cup_handle
 
 router = APIRouter()
 
@@ -219,3 +220,67 @@ def risk_check(code: str):
         "risk_check": result.get("risk_check"),
         "current_price": result.get("technical", {}).get("current_price"),
     }
+
+
+@router.get("/{code}/full")
+def full_analysis(code: str):
+    """全量分析：技术面 + 基本面 + 行业 + 矛盾 + 杜邦 + 估值（聚合）"""
+    from backend.routers.fundamental import fundamental_analysis as fa
+    from backend.services.analyze.contradiction import ContradictionAnalyzer
+    from backend.services.analyze.dupont import DupontAnalyzer
+    from backend.services.analyze.valuation import ValuationAnalyzer
+    from backend.services.external.csv_client import get_industry_from_code
+
+    tech_result = analyze_stock(code)
+
+    # 获取行业
+    sector = get_industry_from_code(code, 5)
+
+    # 并行获取各维度
+    import threading, time
+    results = {"fundamental": None, "contradiction": None, "dupont": None, "valuation": None}
+
+    def fetch_fundamental():
+        try:
+            results["fundamental"] = fa(code)
+        except Exception:
+            pass
+
+    def fetch_contradiction():
+        try:
+            results["contradiction"] = ContradictionAnalyzer.analyze(code, sector)
+        except Exception:
+            pass
+
+    def fetch_dupont():
+        try:
+            results["dupont"] = DupontAnalyzer.analyze(code)
+        except Exception:
+            pass
+
+    def fetch_valuation():
+        try:
+            results["valuation"] = ValuationAnalyzer.analyze(code, sector)
+        except Exception:
+            pass
+
+    threads = []
+    for fn in [fetch_fundamental, fetch_contradiction, fetch_dupont, fetch_valuation]:
+        t = threading.Thread(target=fn, daemon=True)
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join(timeout=30)
+
+    return {
+        "code": code,
+        "technical": tech_result.get("technical"),
+        "risk_check": tech_result.get("risk_check"),
+        "news": tech_result.get("news"),
+        "fundamental": results["fundamental"],
+        "contradiction": results["contradiction"],
+        "dupont": results["dupont"],
+        "valuation": results["valuation"],
+    }
+

@@ -153,11 +153,13 @@ def get_financial_report_sina(code: str, report_type: str) -> list[dict]:
                 if col in ("报告日", "数据源", "是否审计", "公告日期", "币种", "类型", "更新日期"):
                     continue
                 val = r[col]
-                if pd.notna(val) and val != 0:
+                if pd.notna(val):
                     if abs(val) >= 1e4:
                         items[col] = round(val / 1e8, 2)
-                    else:
+                    elif val != 0:
                         items[col] = round(val, 2) if isinstance(val, float) else val
+                    else:
+                        items[col] = 0.0
             rows.append({"period": period, "items": items})
         return rows
     except Exception:

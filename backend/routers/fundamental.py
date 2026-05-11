@@ -32,6 +32,11 @@ from backend.services.external.csv_client import (
     get_industry_stocks_detail,
     get_board_stocks_detail,
 )
+from backend.services.analyze.fundamental import FundamentalAnalyzer
+from backend.services.analyze.industry import IndustryAnalyzer
+from backend.services.analyze.contradiction import ContradictionAnalyzer
+from backend.services.analyze.dupont import DupontAnalyzer
+from backend.services.analyze.valuation import ValuationAnalyzer
 import sqlite3
 import json
 import os
@@ -1213,7 +1218,7 @@ def fundamental_analysis(code: str):
     def _fetch_industry():
         nonlocal industry
         try:
-            industry = _get_industry_data(sector)
+            industry = get_industry_data(sector)
         except Exception:
             industry = None
     
@@ -1226,21 +1231,14 @@ def fundamental_analysis(code: str):
     
     elapsed = time.time() - _start
     
-    # 行业景气周期（有 industry 才分析，单独超时 15s）
+    # 行业景气周期（直接调用 IndustryAnalyzer，不再用线程）
     if industry and not timeout_ex.is_set():
-        cycle = None
-        def _fetch_cycle():
-            nonlocal cycle
-            try:
-                cycle = _analyze_industry_cycle(sector, industry)
-            except Exception:
-                cycle = None
-        tc = threading.Thread(target=_fetch_cycle, daemon=True)
-        tc.start()
-        tc.join(timeout=15)
-        if tc.is_alive():
-            industry["cycle_analysis"] = None  # 不给
-        elif industry and cycle:
+        try:
+            cycle = IndustryAnalyzer.analyze_cycle(sector, industry)
+        except Exception as e:
+            print(f"[fundamental] IndustryAnalyzer.analyze_cycle error for {code}({sector}): {e}", flush=True)
+            cycle = None
+        if cycle:
             industry["cycle_analysis"] = cycle
 
     result = {
