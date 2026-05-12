@@ -34,14 +34,25 @@
             :style="{ borderLeft: `4px solid ${allFailedRules.length === 0 ? '#67c23a' : '#f56c6c'}` }">
             <template #header>
                 <div style="display:flex;align-items:center;justify-content:space-between;">
-                    <div style="display:flex;align-items:center;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                         <el-tag :type="allFailedRules.length === 0 ? 'success' : 'danger'" size="large" effect="dark">
                             {{ allFailedRules.length === 0 ? '✅ 风控通过' : `❌ ${allFailedRules.length} 项未通过` }}
                         </el-tag>
                         <b>{{ result.name }} ({{ result.code }})</b>
+                        <el-tag v-if="result.sector" size="small" type="info" effect="plain">{{ result.sector }}</el-tag>
                         <span v-if="result.technical" style="color:#909399;font-size:13px;">
                             现价 {{ result.technical.current_price?.toFixed(2) }}
                         </span>
+                        <!-- tags -->
+                        <template v-for="tag in stockTags" :key="tag">
+                            <el-tag size="small" closable type="warning" effect="dark" @close="removeStockTag(tag)">
+                                {{ tag }}
+                            </el-tag>
+                        </template>
+                        <el-input v-if="editingTag" v-model="newTagInput" size="small"
+                            placeholder="输入tag" style="width:100px;" @keyup.enter="addStockTag"
+                            @keyup.escape="editingTag=false" @blur="editingTag=false" />
+                        <el-button v-else size="small" text type="primary" @click="startAddTag">+tag</el-button>
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;">
                         <el-button v-if="!inWatchlist" size="small" type="warning" plain
@@ -59,6 +70,9 @@
             </template>
             <div v-if="allFailedRules.length === 0" style="text-align:center;padding:12px;color:#67c23a;">
                 ✅ 所有风控规则全部通过
+            </div>
+            <div v-if="result.sector" style="padding:4px 12px 8px;color:#909399;font-size:13px;display:flex;gap:6px;align-items:center;">
+                🏷️ 所属行业：<el-tag size="small" type="info" effect="plain">{{ result.sector }}</el-tag>
             </div>
             <el-row :gutter="12">
                 <el-col :span="8" v-for="check in allFailedRules" :key="check.rule">
@@ -1441,7 +1455,7 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick, watch, onBeforeUnmount, inject } from 'vue'
-import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, clearChatHistory, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary, getExpenseAnalysis, getFinancialStatements, getIndustryOutlook, getComprehensiveAnalysis, getContradiction, saveSnapshot, deleteSnapshot, updateDraftNotes, listSnapshots, saveFullAnalysis } from '../api/index.js'
+import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, clearChatHistory, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary, getExpenseAnalysis, getFinancialStatements, getIndustryOutlook, getComprehensiveAnalysis, getContradiction, saveSnapshot, deleteSnapshot, updateDraftNotes, listSnapshots, saveFullAnalysis, getStockTags, setStockTags } from '../api/index.js'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import * as echarts from 'echarts'
@@ -1488,6 +1502,40 @@ function stageTitle(stage) {
 }
 const expenseData = ref(null)
 const expenseLoading = ref(false)
+const stockTags = ref([])
+const newTagInput = ref('')
+const editingTag = ref(false)
+
+async function loadStockTags() {
+    const code = result.value?.code
+    if (!code) return
+    try {
+        const { data } = await getStockTags(code)
+        stockTags.value = data.tags || []
+    } catch { stockTags.value = [] }
+}
+async function addStockTag() {
+    const tag = newTagInput.value.trim()
+    if (!tag || !result.value?.code) return
+    if (stockTags.value.includes(tag)) { newTagInput.value = ''; return }
+    const updated = [...stockTags.value, tag]
+    stockTags.value = updated
+    newTagInput.value = ''
+    try { await setStockTags(result.value.code, updated) } catch {}
+}
+async function removeStockTag(tag) {
+    if (!result.value?.code) return
+    const updated = stockTags.value.filter(t => t !== tag)
+    stockTags.value = updated
+    try { await setStockTags(result.value.code, updated) } catch {}
+}
+function startAddTag() {
+    editingTag.value = true
+    newTagInput.value = ''
+    nextTick(() => {
+        document.querySelector('.el-input--small input')?.focus()
+    })
+}
 const statementsVisible = ref(false)
 const statementsLoading = ref(false)
 const statementsData = ref(null)
@@ -2225,6 +2273,8 @@ async function search() {
         document.title = `${data.name} (${code}) - 个股分析 - AI投研助手`
         stockName.value = data.name
         pageStockCode.value = code
+        // 加载tags
+        loadStockTags()
         // 并发加载基本面+档案
         loadFundamental(code)
         loadArchive(code)

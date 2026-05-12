@@ -13,6 +13,7 @@ from backend.config import MARKET_DATA_DIR, CACHE_DIR, CACHE_TTL_SECONDS
 from backend.services.market_service import get_daily_history, get_ma, get_stock_news
 from backend.services.financial_service import get_financial_reports
 from backend.services.analyze.technical import TechnicalAnalyzer
+from backend.services.external.csv_client import get_industry_from_code
 from backend.services.db_client import get_db
 from backend.patterns import detect_patterns, detect_cup_handle
 
@@ -198,9 +199,13 @@ def analyze_stock(code: str):
         except:
             pass
 
+    # 获取行业
+    sector = get_industry_from_code(code, 5)
+
     return {
         "code": code,
         "name": name,
+        "sector": sector,
         "technical": tech_data,
         "fundamental": fund_data,
         "valuation": valuation,

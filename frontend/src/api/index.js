@@ -164,6 +164,13 @@ export function saveFullAnalysis(code, data) {
     return api.post(`/profile/${code}/save-full-analysis`, data)
 }
 
+export function getStockTags(code) {
+    return api.get(`/profile/${code}/tags`)
+}
+export function setStockTags(code, tags) {
+    return api.post(`/profile/${code}/tags`, { tags })
+}
+
 // ========== 风控 ==========
 export function getRiskAlerts() {
     return api.get('/risk/alerts')

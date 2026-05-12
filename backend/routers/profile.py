@@ -2,6 +2,8 @@
 个股档案 API
 """
 from fastapi import APIRouter, HTTPException, Query
+import json
+import os
 from datetime import date, timedelta
 
 from backend.config import MARKET_DATA_DIR
@@ -29,128 +31,152 @@ def all_history(limit: int = Query(50, le=200)):
 
 @router.get("/{code}")
 def stock_profile(code: str):
-    """个股档案"""
+    """个股档案（带20s超时保护）"""
     import pandas as pd
+    import threading
 
-    # 先取技术面（快，0.5s）
-    tech_data = _do_analysis(code)
+    result_box = {}
 
-    # 读取缓存的财务数据，如果没有则从 akshare 拉取并缓存
-    cached_reports = get_financial_reports(code, 20)
-    if cached_reports:
-        records_data = cached_reports
-        fund_data = {}
-        records_mode = "cache"
-    else:
+    def _do_work():
+        nonlocal result_box
         try:
-            fund_data = _do_fundamental(code)
-        except Exception:
-            fund_data = {}
-        fin = fund_data.get("financial_summary") or {}
-        raw_records = fin.get("records") or []
-        # 缓存到数据库
-        if raw_records:
-            save_financial_reports(code, raw_records)
-        records_data = get_financial_reports(code, 20) or raw_records
-        records_mode = "live"
+            tech_data = _do_analysis(code)
+            cached_reports = get_financial_reports(code, 20)
+            if cached_reports:
+                records_data = cached_reports
+                fund_data = {}
+            else:
+                try:
+                    fund_data = _do_fundamental(code)
+                except Exception:
+                    fund_data = {}
+                fin = fund_data.get("financial_summary") or {}
+                raw_records = fin.get("records") or []
+                if raw_records:
+                    save_financial_reports(code, raw_records)
+                records_data = get_financial_reports(code, 20) or raw_records
 
-    name = tech_data.get("name", "") or fund_data.get("name", "")
-    sector = fund_data.get("sector", "")
+            name = tech_data.get("name", "") or fund_data.get("name", "")
+            sector = fund_data.get("sector", "")
+            if not sector:
+                today = date.today()
+                for i in range(5):
+                    d = (today - timedelta(days=i)).isoformat()
+                    path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
+                    if path.exists():
+                        df = pd.read_csv(path, encoding="utf-16", sep="\t")
+                        df["代码"] = df["代码"].astype(str).str.strip("'\"")
+                        match = df[df["代码"] == code]
+                        if not match.empty:
+                            sector = str(match.iloc[0].get("所属行业", ""))
+                            if not name:
+                                name = str(match.iloc[0].get("名称", ""))
+                        break
 
-    # 补行业
-    if not sector:
-        today = date.today()
-        for i in range(5):
-            d = (today - timedelta(days=i)).isoformat()
-            path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
-            if path.exists():
-                df = pd.read_csv(path, encoding="utf-16", sep="\t")
-                df["代码"] = df["代码"].astype(str).str.strip("'\"")
-                match = df[df["代码"] == code]
-                if not match.empty:
-                    sector = str(match.iloc[0].get("所属行业", ""))
-                    if not name:
-                        name = str(match.iloc[0].get("名称", ""))
-                break
+            # 行业基础数据（读CSV，快） + 景气周期分析（子线程5s超时，慢）
+            if cached_reports and sector and not fund_data.get("industry_outlook"):
+                try:
+                    from backend.routers.fundamental import _get_industry_data, _analyze_industry_cycle
+                    ind_part = _get_industry_data(sector)
+                    if ind_part:
+                        # _analyze_industry_cycle 可能调用akshare挂起，丢子线程+5s超时
+                        cycle_box = {}
+                        def _fetch_cycle():
+                            try:
+                                c = _analyze_industry_cycle(sector, ind_part)
+                                if c:
+                                    cycle_box["data"] = c
+                            except Exception:
+                                pass
+                        ct = threading.Thread(target=_fetch_cycle, daemon=True)
+                        ct.start()
+                        ct.join(timeout=5)
+                        if cycle_box.get("data"):
+                            ind_part["cycle_analysis"] = cycle_box["data"]
+                        fund_data["industry_outlook"] = ind_part
+                except Exception:
+                    pass
 
-    # 缓存命中时 fund_data 为空，需要单独获取行业前瞻数据
-    if cached_reports and sector and not fund_data.get("industry_outlook"):
-        try:
-            from backend.routers.fundamental import _get_industry_data, _analyze_industry_cycle
-            ind_part = _get_industry_data(sector)
-            cycle_part = _analyze_industry_cycle(sector, ind_part)
-            if ind_part:
-                if cycle_part:
-                    ind_part["cycle_analysis"] = cycle_part
-                fund_data["industry_outlook"] = ind_part
-        except Exception:
-            pass
+            t = tech_data.get("technical") or {}
+            rc = tech_data.get("risk_check") or {}
+            ind = fund_data.get("industry_outlook") or {}
+            rev = fund_data.get("revenue_breakdown") or []
 
-    t = tech_data.get("technical") or {}
-    rc = tech_data.get("risk_check") or {}
-    records = records_data
-    ind = fund_data.get("industry_outlook") or {}
-    rev = fund_data.get("revenue_breakdown") or []
+            profile = {
+                "code": code, "name": name, "sector": sector,
+                "price": t.get("current_price"), "change_pct": t.get("change_pct"),
+                "ma5": t.get("ma5"), "ma10": t.get("ma10"), "ma20": t.get("ma20"),
+                "ma60": t.get("ma60"), "ma200": t.get("ma200"),
+                "rsi14": t.get("rsi_14"), "macd": t.get("macd"),
+                "bullish_alignment": t.get("bullish_alignment"),
+                "trend_status": t.get("trend_status", "空头"),
+                "risk_passed": rc.get("passed"),
+                "news": tech_data.get("news", []),
+                "business": rev[0].get("business", "") if rev else "",
+                "top_stocks": ind.get("top_stocks", []),
+                "industry_rank": ind.get("rank"), "industry_total": ind.get("total_sectors"),
+                "industry_avg_chg": ind.get("avg_change"),
+                "latest_report": None, "revenue": None, "revenue_yoy": None,
+                "net_profit": None, "net_profit_yoy": None,
+                "gross_margin": None, "roe": None, "eps": None, "bps": None,
+                "debt_ratio": None, "current_ratio": None,
+                "financial_records": [], "notes": [], "analysis_history": [],
+            }
+            if records_data:
+                last = records_data[0]
+                profile.update({
+                    "latest_report": last.get("period") or last.get("报告期", ""),
+                    "revenue": last.get("revenue") or last.get("营业总收入"),
+                    "revenue_yoy": last.get("revenue_yoy") or last.get("营业总收入同比增长率"),
+                    "net_profit": last.get("net_profit") or last.get("净利润"),
+                    "net_profit_yoy": last.get("net_profit_yoy") or last.get("净利润同比增长率"),
+                    "gross_margin": last.get("gross_margin") or last.get("销售毛利率"),
+                    "roe": last.get("roe") or last.get("净资产收益率"),
+                    "eps": last.get("eps") or last.get("基本每股收益"),
+                    "bps": last.get("bps") or last.get("每股净资产"),
+                    "debt_ratio": last.get("debt_ratio") or last.get("资产负债率"),
+                    "current_ratio": last.get("current_ratio") or last.get("流动比率"),
+                })
+                profile["financial_records"] = records_data[:20]
 
-    profile = {
-        "code": code, "name": name, "sector": sector,
-        "price": t.get("current_price"), "change_pct": t.get("change_pct"),
-        "ma5": t.get("ma5"), "ma10": t.get("ma10"), "ma20": t.get("ma20"),
-        "ma60": t.get("ma60"), "ma200": t.get("ma200"),
-        "rsi14": t.get("rsi_14"), "macd": t.get("macd"),
-        "bullish_alignment": t.get("bullish_alignment"),
-        "trend_status": t.get("trend_status", "空头"),
-        "risk_passed": rc.get("passed"),
-        "news": tech_data.get("news", []),
-        "business": rev[0].get("business", "") if rev else "",
-        "top_stocks": ind.get("top_stocks", []),
-        "industry_rank": ind.get("rank"), "industry_total": ind.get("total_sectors"),
-        "industry_avg_chg": ind.get("avg_change"),
-        "latest_report": None, "revenue": None, "revenue_yoy": None,
-        "net_profit": None, "net_profit_yoy": None,
-        "gross_margin": None, "roe": None, "eps": None, "bps": None,
-        "debt_ratio": None, "current_ratio": None,
-        "financial_records": [], "notes": [], "analysis_history": [],
+            profile["notes"] = get_notes(code)
+            profile["analysis_history"] = get_stock_history(code)
+            profile["chat_history"] = get_chat_history(code, 30)
+            profile["draft_notes"] = get_draft_notes(code)
+
+            try:
+                last_rec = records_data[-1] if records_data else None
+                save_analysis(code, name, sector, {
+                    "technical": t,
+                    "fundamental": {"revenue": last_rec.get("revenue") or last_rec.get("营业总收入") if last_rec else None,
+                                   "net_profit": last_rec.get("net_profit") or last_rec.get("净利润") if last_rec else None,
+                                   "gross_margin": last_rec.get("gross_margin") or last_rec.get("销售毛利率") if last_rec else None,
+                                   "roe": last_rec.get("roe") or last_rec.get("净资产收益率") if last_rec else None},
+                    "risk_check": rc, "industry_outlook": ind,
+                    "pe": None, "pb": None, "market_cap": None,
+                })
+            except Exception:
+                pass
+            result_box["profile"] = profile
+        except Exception as e:
+            result_box["error"] = str(e)
+
+    worker = threading.Thread(target=_do_work, daemon=True)
+    worker.start()
+    worker.join(timeout=20)
+
+    if result_box.get("profile"):
+        return result_box["profile"]
+
+    # 超时或出错，返回最基本的信息
+    return {
+        "code": code,
+        "name": "",
+        "sector": "",
+        "price": None, "change_pct": None,
+        "latest_report": None, "financial_records": [],
+        "_timeout": True,
     }
-
-    if records:
-        last = records_data[0]  # 已经按时间倒序
-        profile.update({
-            "latest_report": last.get("period") or last.get("报告期", ""),
-            "revenue": last.get("revenue") or last.get("营业总收入"),
-            "revenue_yoy": last.get("revenue_yoy") or last.get("营业总收入同比增长率"),
-            "net_profit": last.get("net_profit") or last.get("净利润"),
-            "net_profit_yoy": last.get("net_profit_yoy") or last.get("净利润同比增长率"),
-            "gross_margin": last.get("gross_margin") or last.get("销售毛利率"),
-            "roe": last.get("roe") or last.get("净资产收益率"),
-            "eps": last.get("eps") or last.get("基本每股收益"),
-            "bps": last.get("bps") or last.get("每股净资产"),
-            "debt_ratio": last.get("debt_ratio") or last.get("资产负债率"),
-            "current_ratio": last.get("current_ratio") or last.get("流动比率"),
-        })
-        profile["financial_records"] = records_data[:20]
-
-    profile["notes"] = get_notes(code)
-    profile["analysis_history"] = get_stock_history(code)
-    profile["chat_history"] = get_chat_history(code, 30)
-    profile["draft_notes"] = get_draft_notes(code)
-
-    # 后台存DB
-    try:
-        last_rec = records[-1] if records else None
-        save_analysis(code, name, sector, {
-            "technical": t,
-            "fundamental": {"revenue": last_rec.get("revenue") or last_rec.get("营业总收入") if last_rec else None,
-                           "net_profit": last_rec.get("net_profit") or last_rec.get("净利润") if last_rec else None,
-                           "gross_margin": last_rec.get("gross_margin") or last_rec.get("销售毛利率") if last_rec else None,
-                           "roe": last_rec.get("roe") or last_rec.get("净资产收益率") if last_rec else None},
-            "risk_check": rc, "industry_outlook": ind,
-            "pe": None, "pb": None, "market_cap": None,
-        })
-    except Exception:
-        pass
-
-    return profile
 
 
 @router.post("/{code}/save-full-analysis")
@@ -244,3 +270,39 @@ def delete_analysis_draft(code: str, analysis_date: str):
     if not ok:
         raise HTTPException(404, "草稿不存在或已删除")
     return {"status": "ok"}
+
+
+TAGS_PATH = os.path.expanduser("~/Jarvis/stock_tags.json")
+
+def _load_tags() -> dict:
+    if os.path.exists(TAGS_PATH):
+        try:
+            with open(TAGS_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def _save_tags(tags: dict):
+    os.makedirs(os.path.dirname(TAGS_PATH), exist_ok=True)
+    with open(TAGS_PATH, "w", encoding="utf-8") as f:
+        json.dump(tags, f, ensure_ascii=False, indent=2)
+
+
+@router.get("/{code}/tags")
+def get_stock_tags(code: str):
+    """获取股票tag列表"""
+    tags = _load_tags()
+    return {"code": code, "tags": tags.get(code, [])}
+
+
+@router.post("/{code}/tags")
+def set_stock_tags(code: str, data: dict):
+    """设置股票tag列表，tags应为字符串数组"""
+    new_tags = (data or {}).get("tags", [])
+    if not isinstance(new_tags, list):
+        raise HTTPException(400, "tags must be a list of strings")
+    tags = _load_tags()
+    tags[code] = [str(t).strip() for t in new_tags if str(t).strip()]
+    _save_tags(tags)
+    return {"code": code, "tags": tags[code]}

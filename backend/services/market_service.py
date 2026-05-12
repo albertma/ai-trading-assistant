@@ -92,8 +92,28 @@ def get_prices_batch(codes: list[str]) -> dict[str, float]:
 # ═══════════════════════════════════════════════════════════
 
 def get_daily_history(code: str, max_days: int = 250) -> pd.DataFrame | None:
-    """获取个股日线行情（腾讯API优先，akshare兜底）"""
+    """获取个股日线行情（SQLite → 腾讯API → akshare）"""
     import urllib.request, json
+    import sqlite3
+    from pathlib import Path
+
+    DB = str(Path.home() / "Jarvis/ai_trading/stock_archive.db")
+
+    # 方法0: SQLite kline_daily（最快，无网络）
+    try:
+        conn = sqlite3.connect(DB)
+        df = pd.read_sql_query(
+            "SELECT date, open, close, high, low, volume FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT ?",
+            conn, params=(code, max_days))
+        conn.close()
+        if not df.empty:
+            df = df.sort_values("date").reset_index(drop=True)
+            df["date"] = pd.to_datetime(df["date"])
+            df["pct_change"] = df["close"].pct_change() * 100
+            df["amount"] = df["volume"] * 100 * (df["high"] + df["low"] + df["close"]) / 3
+            return df
+    except Exception:
+        pass
 
     market = "sh" if code.startswith("6") else "sz" if code.startswith(("0", "3")) else "bj"
 
@@ -120,10 +140,23 @@ def get_daily_history(code: str, max_days: int = 250) -> pd.DataFrame | None:
     except Exception:
         pass
 
-    # 方法2: akshare（兜底）
+    # 方法2: akshare（兜底，带15s超时）
     try:
         import akshare as ak
-        df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
+        import threading
+        _result = [None]
+        _exc = [None]
+        def _fetch():
+            try:
+                _result[0] = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
+            except Exception as e:
+                _exc[0] = e
+        t = threading.Thread(target=_fetch, daemon=True)
+        t.start()
+        t.join(timeout=15)
+        if t.is_alive() or _exc[0] is not None:
+            raise Exception("akshare timeout or error")
+        df = _result[0]
         if df is not None and not df.empty:
             df.columns = [c.strip() for c in df.columns]
             df.rename(columns={
