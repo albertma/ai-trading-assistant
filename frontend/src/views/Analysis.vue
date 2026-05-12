@@ -78,7 +78,10 @@
         <!-- 选项卡面板 -->
         <el-tabs v-if="result" v-model="activeTab" type="border-card" @tab-click="onTabClick">
             <!-- Tab 1: 技术面 -->
-            <el-tab-pane label="📈 技术面" name="tech">
+            <el-tab-pane name="tech">
+                <template #label>
+                    <span>📈 技术面 <span style="cursor:pointer;margin-left:3px;color:#409eff;" @click.stop="refreshTab('tech')">↻</span></span>
+                </template>
                 <el-row :gutter="16" v-if="result.technical">
                     <el-col :span="12">
                         <el-card shadow="hover">
@@ -125,7 +128,10 @@
             </el-tab-pane>
 
             <!-- Tab 2: K线形态 + K线图 -->
-            <el-tab-pane label="🕯️ K线图表" name="kline">
+            <el-tab-pane name="kline">
+                <template #label>
+                    <span>🕯️ K线图表 <span style="cursor:pointer;margin-left:3px;color:#409eff;" @click.stop="refreshTab('kline')">↻</span></span>
+                </template>
                 <!-- K线图容器 -->
                 <div ref="klineChartRef" style="width:100%;height:520px;margin-bottom:16px;"></div>
                 <div v-if="klineLoading" style="text-align:center;padding:30px;color:#909399;">
@@ -162,7 +168,10 @@
             </el-tab-pane>
 
             <!-- Tab 3: 基本面 -->
-            <el-tab-pane label="📊 基本面" name="fundamental">
+            <el-tab-pane name="fundamental">
+                <template #label>
+                    <span>📊 基本面 <span style="cursor:pointer;margin-left:3px;color:#409eff;" @click.stop="refreshTab('fundamental')">↻</span></span>
+                </template>
                 <div v-if="fundLoading" style="text-align:center;padding:40px;"><el-icon class="is-loading" :size="32"><Loading /></el-icon></div>
                 <template v-else-if="fundData">
                     <el-card shadow="hover" style="margin-bottom:16px;">
@@ -259,7 +268,10 @@
             </el-tab-pane>
 
             <!-- Tab 3c: 综合评估（6大维度+同行对比+管理层） -->
-            <el-tab-pane label="🎯 综合评估" name="comprehensive">
+            <el-tab-pane name="comprehensive">
+                <template #label>
+                    <span>🎯 综合评估 <span style="cursor:pointer;margin-left:3px;color:#409eff;" @click.stop="refreshTab('comprehensive')">↻</span></span>
+                </template>
                 <div v-if="comprehensiveLoading" style="text-align:center;padding:40px;">
                     <el-icon class="is-loading" :size="32"><Loading /></el-icon>
                     <p style="color:#909399;margin-top:8px;">加载综合评估...</p>
@@ -479,7 +491,10 @@
             </el-tab-pane>
 
             <!-- Tab 3a: 矛盾分析 -->
-            <el-tab-pane label="⚖️ 矛盾分析" name="contradiction">
+            <el-tab-pane name="contradiction">
+                <template #label>
+                    <span>⚖️ 矛盾分析 <span style="cursor:pointer;margin-left:3px;color:#409eff;" @click.stop="refreshTab('contradiction')">↻</span></span>
+                </template>
                 <div v-if="contradictionLoading" style="text-align:center;padding:40px;">
                     <el-icon class="is-loading" :size="32"><Loading /></el-icon>
                     <p style="color:#909399;margin-top:8px;">加载矛盾分析...</p>
@@ -599,7 +614,10 @@
             </el-tab-pane>
 
             <!-- Tab 3b: 杜邦分析 -->
-            <el-tab-pane label="📐 杜邦分析" name="dupont">
+            <el-tab-pane name="dupont">
+                <template #label>
+                    <span>📐 杜邦分析 <span style="cursor:pointer;margin-left:3px;color:#409eff;" @click.stop="refreshTab('dupont')">↻</span></span>
+                </template>
                 <div v-if="dupontLoading" style="text-align:center;padding:40px;"><el-icon class="is-loading" :size="32"><Loading /></el-icon></div>
                 <template v-else-if="dupontData?.dupont?.rows?.length">
                     <el-row :gutter="16" style="margin-bottom:16px;">
@@ -705,7 +723,10 @@
             </el-tab-pane>
 
             <!-- Tab 4: 行业前瞻 — 景气周期 + 供需矛盾(产业链逐环节) + 量化预测 -->
-            <el-tab-pane label="🔭 行业前瞻" name="industry">
+            <el-tab-pane name="industry">
+                <template #label>
+                    <span>🔭 行业前瞻 <span style="cursor:pointer;margin-left:3px;color:#409eff;" @click.stop="refreshTab('industry')">↻</span></span>
+                </template>
                 <!-- 加载中状态：进度条 + 加载阶段标签 -->
                 <div v-if="industryLoading" style="padding:30px;text-align:center;">
                     <el-progress :percentage="Math.min(industryLoadProgress, 100)" :stroke-width="10" :text-inside="true" :status="industryLoadProgress >= 100 ? 'success' : ''" style="max-width:500px;margin:0 auto 16px;" />
@@ -1053,7 +1074,10 @@
 
             <!-- Tab 4: 档案 -->
             <!-- Tab 4: 档案 — 草稿笔记 + 快照历史 -->
-            <el-tab-pane label="📁 档案" name="archive">
+            <el-tab-pane name="archive">
+                <template #label>
+                    <span>📁 档案 <span style="cursor:pointer;margin-left:3px;color:#409eff;" @click.stop="refreshTab('archive')">↻</span></span>
+                </template>
                 <div v-if="archiveLoading" style="text-align:center;padding:40px;"><el-icon class="is-loading" :size="32"><Loading /></el-icon></div>
                 <template v-else-if="archiveData">
                     <!-- 技术指标封面 -->
@@ -1610,6 +1634,47 @@ async function loadIndustryOutlookData() {
         stopIndustryProgress()
         setTimeout(() => { industryLoading.value = false }, 300)
     })
+}
+function refreshTab(tabName) {
+    const code = result.value?.code
+    if (!code) return
+    switch (tabName) {
+        case 'tech':
+            analyzeStock(code)
+            break
+        case 'kline':
+            klineChartInstance?.dispose()
+            klineChartInstance = null
+            klineLoading.value = true
+            nextTick(() => loadKlineChart())
+            break
+        case 'fundamental':
+            fundData.value = null
+            statementsData.value = null
+            loadFundamental(code)
+            break
+        case 'comprehensive':
+            comprehensiveData.value = null
+            loadComprehensiveData()
+            break
+        case 'contradiction':
+            contradictionData.value = null
+            loadContradictionData()
+            break
+        case 'dupont':
+            dupontData.value = null
+            dupontCommentary.value = []
+            loadDupontData()
+            break
+        case 'industry':
+            industryOutlookData.value = null
+            loadIndustryOutlookData()
+            break
+        case 'archive':
+            archiveData.value = null
+            loadArchive(code)
+            break
+    }
 }
 const dupontData = ref(null)
 const dupontLoading = ref(false)
