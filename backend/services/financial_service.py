@@ -135,12 +135,18 @@ def get_financial_summary(code: str) -> dict | None:
 
 
 # ═══════════════════════════════════════════════════════════
-# 其他财务函数（直接转发，后续可加缓存）
+# 主营业务构成（带缓存）
 # ═══════════════════════════════════════════════════════════
 
 def get_revenue_breakdown(code: str) -> list | None:
-    """主营业务构成"""
-    return _ak_get_revenue_breakdown(code)
+    """主营业务构成（SQLite缓存→akshare）"""
+    cached = _get_db_financial(code, "revenue")
+    if cached:
+        return cached.get("data")
+    data = _ak_get_revenue_breakdown(code)
+    if data:
+        _save_db_financial(code, "revenue", {"data": data})
+    return data
 
 
 def get_earnings_data(code: str) -> dict:

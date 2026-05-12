@@ -82,6 +82,9 @@ export function getExpenseAnalysis(code) {
 export function getFinancialStatements(code) {
     return api.get(`/fundamental/statements/${code}`)
 }
+export function getIndustryOutlook(code) {
+    return api.get(`/fundamental/${code}/industry-outlook`)
+}
 export function getComprehensiveAnalysis(code) {
     return api.get(`/fundamental/comprehensive/${code}`)
 }

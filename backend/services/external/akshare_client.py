@@ -4,6 +4,32 @@
 """
 import pandas as pd
 import numpy as np
+import os
+import json
+import threading
+
+# ── 通用akshare超时包装 ──────────────────────────────────
+_AK_TIMEOUT = 8  # 所有akshare调用统一8s超时
+
+def _ak_call(fn, *args, timeout=_AK_TIMEOUT, **kwargs):
+    """在daemon线程中执行akshare函数，超时抛出TimeoutError"""
+    result = []
+    exc_info = []
+
+    def worker():
+        try:
+            result.append(fn(*args, **kwargs))
+        except Exception as e:
+            exc_info.append(e)
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    if t.is_alive():
+        raise TimeoutError(f"akshare {fn.__name__ if hasattr(fn, '__name__') else 'call'} timed out after {timeout}s")
+    if exc_info:
+        raise exc_info[0]
+    return result[0]
 
 def _to_records(df: pd.DataFrame) -> list[dict]:
     """DataFrame转为纯Python dict列表，清理numpy类型，统一单位到亿"""
@@ -49,10 +75,10 @@ def _to_records(df: pd.DataFrame) -> list[dict]:
 # ── 财务摘要 ──────────────────────────────────────────────
 
 def get_financial_summary(code: str) -> dict | None:
-    """stock_financial_abstract_ths：多期财务摘要"""
+    """stock_financial_abstract_ths：多期财务摘要（8s超时）"""
     import akshare as ak
     try:
-        df = ak.stock_financial_abstract_ths(symbol=code)
+        df = _ak_call(ak.stock_financial_abstract_ths, symbol=code)
         if df is None or df.empty:
             return None
         return {"columns": list(df.columns), "records": _to_records(df)}
@@ -63,10 +89,10 @@ def get_financial_summary(code: str) -> dict | None:
 # ── 主营业务构成 ─────────────────────────────────────────
 
 def get_revenue_breakdown(code: str) -> list | None:
-    """stock_zyjs_ths：主营业务构成（产品/经营范围）"""
+    """stock_zyjs_ths：主营业务构成（产品/经营范围）（8s超时）"""
     import akshare as ak
     try:
-        df = ak.stock_zyjs_ths(symbol=code)
+        df = _ak_call(ak.stock_zyjs_ths, symbol=code)
         if df is None or df.empty:
             return None
         result = []
@@ -91,7 +117,7 @@ def get_earnings_data(code: str) -> dict:
         result = {}
         for date_tag in ['20250331', '20250630', '20250930', '20251231', '20260331']:
             try:
-                df = ak.stock_yjbb_em(date=date_tag)
+                df = _ak_call(ak.stock_yjbb_em, date=date_tag)
                 row = df[df['股票代码'] == code]
                 if not row.empty:
                     r = row.to_dict('records')[0]
@@ -141,7 +167,7 @@ def get_financial_report_sina(code: str, report_type: str) -> list[dict]:
     import akshare as ak
     prefix = _sina_prefix(code)
     try:
-        df = ak.stock_financial_report_sina(stock=f"{prefix}{code}", symbol=report_type)
+        df = _ak_call(ak.stock_financial_report_sina, stock=f"{prefix}{code}", symbol=report_type)
         if df is None or df.empty:
             return []
         df = df.sort_values("报告日", ascending=False)
@@ -248,21 +274,83 @@ def get_expense_data(code: str) -> dict | None:
 
 
 # ── 概念板块实时行情 ──────────────────────────────────────
-
 _concept_board_cache: dict = {}
-_CONCEPT_CACHE_TTL = 86400  # 24小时
+_concept_board_file = os.path.expanduser("~/Jarvis/ai_trading/concept_board_cache.json")
+_CONCEPT_CACHE_TTL = 86400  # 24h
+
+
+def _load_concept_board_cache() -> dict:
+    """从磁盘加载概念板块缓存"""
+    try:
+        if os.path.exists(_concept_board_file):
+            with open(_concept_board_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+def _save_concept_board_cache(data: dict):
+    """保存概念板块缓存到磁盘"""
+    try:
+        os.makedirs(os.path.dirname(_concept_board_file), exist_ok=True)
+        with open(_concept_board_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
 
 def get_concept_board_data() -> dict:
-    """stock_board_concept_name_em：概念板块涨跌行情（带24h缓存）"""
+    """stock_board_concept_name_em：概念板块涨跌行情（带24h内存缓存 + 磁盘持久缓存 + 5s超时）"""
     import time
     global _concept_board_cache
     now = time.time()
     if _concept_board_cache and (now - _concept_board_cache.get("_ts", 0)) < _CONCEPT_CACHE_TTL:
         return _concept_board_cache
 
+    # 有磁盘缓存则直接使用（akshare API常挂，不浪费时间去等）
+    disk_cache = _load_concept_board_cache()
+    if disk_cache:
+        disk_cache["_ts"] = now
+        _concept_board_cache = disk_cache
+        # 后台更新：akshare有数据就刷新，不阻塞
+        try:
+            import threading
+            def _bg_refresh():
+                try:
+                    import akshare as ak
+                    df = _ak_call(ak.stock_board_concept_name_em)
+                    if df is not None and not df.empty:
+                        new_data = {}
+                        for _, r in df.iterrows():
+                            name = str(r.get("板块名称", ""))
+                            new_data[name] = {
+                                "change_pct": float(r.get("涨跌幅", 0) or 0),
+                                "up_count": int(r.get("上涨家数", 0) or 0),
+                                "down_count": int(r.get("下跌家数", 0) or 0),
+                                "turnover": float(r.get("换手率", 0) or 0),
+                                "leader": str(r.get("领涨股票", "")),
+                                "leader_chg": float(r.get("领涨股票-涨跌幅", 0) or 0),
+                            }
+                        new_data["_ts"] = time.time()
+                        _save_concept_board_cache(new_data)
+                        global _concept_board_cache
+                        _concept_board_cache = new_data
+                except Exception:
+                    pass
+            t = threading.Thread(target=_bg_refresh, daemon=True)
+            t.start()
+        except Exception:
+            pass
+        return disk_cache
+
+    # 首次无缓存时，尝试akshare（_ak_call带8s超时）
     try:
         import akshare as ak
-        df = ak.stock_board_concept_name_em()
+        df = _ak_call(ak.stock_board_concept_name_em)
+        if df is None or df.empty:
+            return {}
         result = {}
         for _, r in df.iterrows():
             name = str(r.get("板块名称", ""))
@@ -276,9 +364,11 @@ def get_concept_board_data() -> dict:
             }
         result["_ts"] = now
         _concept_board_cache = result
+        _save_concept_board_cache(result)
         return result
     except Exception:
-        return _concept_board_cache or {}
+        # akshare报错不缓存
+        return {}
 
 
 # ── 财务分析指标 ──────────────────────────────────────────
@@ -287,7 +377,7 @@ def get_financial_indicators(code: str, start_year: str = "2023") -> list[dict]:
     """stock_financial_analysis_indicator：杜邦/盈利能力指标时间序列"""
     import akshare as ak
     try:
-        df = ak.stock_financial_analysis_indicator(symbol=code, start_year=start_year)
+        df = _ak_call(ak.stock_financial_analysis_indicator, symbol=code, start_year=start_year)
         df = df.sort_values("日期", ascending=False)
         return df.to_dict("records")
     except Exception:
@@ -300,7 +390,7 @@ def get_management_changes(code: str) -> list[dict]:
     """stock_management_change_ths：管理层持股变动记录"""
     import akshare as ak
     try:
-        df = ak.stock_management_change_ths(symbol=code)
+        df = _ak_call(ak.stock_management_change_ths, symbol=code)
         df = df.sort_values("变动日期", ascending=False)
         return df.head(10).to_dict("records")
     except Exception:
@@ -315,7 +405,7 @@ def get_main_shareholders(code: str) -> tuple[pd.DataFrame | None, str | None]:
     """
     import akshare as ak
     try:
-        sh_df = ak.stock_main_stock_holder(stock=code)
+        sh_df = _ak_call(ak.stock_main_stock_holder, stock=code)
         sh_df = sh_df.sort_values("截至日期", ascending=False)
         latest_date = sh_df.iloc[0].get("截至日期")
         sh_df = sh_df[sh_df["截至日期"] == latest_date].copy()
@@ -330,10 +420,10 @@ def get_main_shareholders(code: str) -> tuple[pd.DataFrame | None, str | None]:
 # ── 概念板块成分股 ────────────────────────────────────────
 
 def get_concept_board_constituents(board_name: str) -> list[dict]:
-    """stock_board_concept_cons_em：获取概念板块成分股（含涨幅排序）"""
+    """stock_board_concept_cons_em：获取概念板块成分股（含涨幅排序）（8s超时）"""
     import akshare as ak
     try:
-        cons_df = ak.stock_board_concept_cons_em(symbol=board_name)
+        cons_df = _ak_call(ak.stock_board_concept_cons_em, symbol=board_name)
         if cons_df.empty:
             return []
         cols = ["代码", "名称", "最新价", "涨跌幅"]
@@ -369,7 +459,7 @@ def get_hk_stock_daily_price(code: str) -> float | None:
     # 从 akshare 拉取
     import akshare as ak
     try:
-        df = ak.stock_hk_daily(symbol=code)
+        df = _ak_call(ak.stock_hk_daily, symbol=code)
         if df is not None and not df.empty:
             latest_close = float(df.iloc[-1]["close"])
             # 写入 kline_daily（全量）

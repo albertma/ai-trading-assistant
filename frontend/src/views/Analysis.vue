@@ -721,7 +721,7 @@
                 </div>
 
                 <!-- 数据加载完成之后 -->
-                <template v-else-if="fundData?.industry_outlook || industrySupplyData">
+                <template v-else-if="industryOutlookData || industrySupplyData">
                     <div v-if="!hasIndustryData" style="text-align:center;padding:30px;color:#909399;">
                         <el-empty description="该标的不在行业分类中，暂无行业前瞻数据" />
                     </div>
@@ -1417,7 +1417,7 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick, watch, onBeforeUnmount, inject } from 'vue'
-import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, clearChatHistory, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary, getExpenseAnalysis, getFinancialStatements, getComprehensiveAnalysis, getContradiction, saveSnapshot, deleteSnapshot, updateDraftNotes, listSnapshots, saveFullAnalysis } from '../api/index.js'
+import { analyzeStock, getFundamental, getStockProfile, addStockNote, chatWithAI, summarizeChat, getAiAnalyses, clearAiAnalyses as apiClearAi, clearChatHistory, searchStockInfo, addWatchItem, getWatchlist, getLocalKline, getDupontAnalysis, getDupontCommentary, getExpenseAnalysis, getFinancialStatements, getIndustryOutlook, getComprehensiveAnalysis, getContradiction, saveSnapshot, deleteSnapshot, updateDraftNotes, listSnapshots, saveFullAnalysis } from '../api/index.js'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import * as echarts from 'echarts'
@@ -1449,12 +1449,13 @@ const contradictionData = ref(null)
 const contradictionLoading = ref(false)
 const selectedContradiction = ref(null)
 const industryLoading = ref(false)
+const industryOutlookData = ref(null)
 const industrySupplyData = ref(null)
 const activeChainStage = ref('0')
 const expandedModel = ref(null)
 
-const cycleAnalysis = computed(() => fundData.value?.industry_outlook?.cycle_analysis || null)
-const industryOutlook = computed(() => fundData.value?.industry_outlook || null)
+const cycleAnalysis = computed(() => industryOutlookData.value?.cycle_analysis || null)
+const industryOutlook = computed(() => industryOutlookData.value || null)
 const chainAnalysis = computed(() => cycleAnalysis.value?.chain_analysis || [])
 const hasIndustryData = computed(() => !!(industryOutlook.value || industrySupplyData.value))
 
@@ -1596,6 +1597,19 @@ async function loadContradictionData() {
         contradictionLoading.value = false
         saveCurrentAnalysis()
     }
+}
+async function loadIndustryOutlookData() {
+    if (industryOutlookData.value) return
+    const code = result.value?.code
+    if (!code) return
+    startIndustryProgress()
+    industryLoading.value = true
+    getIndustryOutlook(code).then(resp => {
+        industryOutlookData.value = resp.data.industry_outlook
+    }).finally(() => {
+        stopIndustryProgress()
+        setTimeout(() => { industryLoading.value = false }, 300)
+    })
 }
 const dupontData = ref(null)
 const dupontLoading = ref(false)
@@ -2066,16 +2080,7 @@ function onTabClick(tab) {
         nextTick(() => loadFundamental(result.value.code))
     }
     if (tab.props.name === 'industry' && result.value?.code) {
-        nextTick(() => {
-            if (!fundData.value) {
-                startIndustryProgress()
-                industryLoading.value = true
-                loadFundamental(result.value.code).finally(() => {
-                    stopIndustryProgress()
-                    setTimeout(() => { industryLoading.value = false }, 300)
-                })
-            }
-        })
+        nextTick(() => loadIndustryOutlookData())
     }
 }
 
@@ -2243,6 +2248,21 @@ async function loadFundamental(code) {
     fundLoading.value = false
     // 基本面加载完成后，再次保存（此时 industry_outlook 有了）
     saveCurrentAnalysis()
+}
+
+/** 快速基本面加载：只拿核心数据（industry_outlook），财务报表后台静默 */
+async function loadFundamentalFast(code) {
+    fundLoading.value = true
+    try {
+        const fundResp = await getFundamental(code)
+        fundData.value = fundResp.data
+    } catch { /* 核心数据不能丢 */ }
+    fundLoading.value = false
+    saveCurrentAnalysis()
+    // 财务报表后台加载，不阻塞
+    getFinancialStatements(code).then(resp => {
+        statementsData.value = resp.data
+    }).catch(() => {})
 }
 
 async function loadArchive(code) {

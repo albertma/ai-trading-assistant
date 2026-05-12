@@ -1254,6 +1254,67 @@ def fundamental_analysis(code: str):
     return result
 
 
+@router.get("/{code}/industry-outlook")
+def industry_outlook_api(code: str):
+    """行业前瞻轻量接口（不包含财务摘要/收入构成），仅返回行业数据"""
+    import threading
+    from backend.routers.analysis import _get_stock_list
+    stock_map = _get_stock_list()
+    name = stock_map.get(code, "")
+
+    sector = None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT industry FROM stock_info WHERE code=?", (code,))
+        row = c.fetchone()
+        conn.close()
+        if row and row[0]:
+            sector = row[0]
+    except Exception:
+        pass
+
+    if not sector or sector == "--":
+        sector = get_industry_from_code(code, 5)
+
+    # 行业数据（带25s超时）
+    industry = None
+    cycle = None
+    timeout_ex = threading.Event()
+
+    def _fetch_industry():
+        nonlocal industry
+        try:
+            industry = get_industry_data(sector)
+        except Exception:
+            industry = None
+
+    t = threading.Thread(target=_fetch_industry, daemon=True)
+    t.start()
+    t.join(timeout=25)
+    if t.is_alive():
+        timeout_ex.set()
+        industry = None
+
+    if industry and not timeout_ex.is_set():
+        try:
+            cycle = IndustryAnalyzer.analyze_cycle(sector, industry)
+        except Exception as e:
+            print(f"[industry-outlook] analyze_cycle error for {code}({sector}): {e}", flush=True)
+            cycle = None
+        if cycle:
+            industry["cycle_analysis"] = cycle
+
+    result = {
+        "code": code,
+        "name": name,
+        "sector": sector,
+        "industry_outlook": industry,
+        "_industry_timeout": timeout_ex.is_set(),
+    }
+    return result
+
+
 @router.get("/{code}/supply_chain")
 def supply_chain_api(code: str):
     """供应链上下游数据（概念板块），lazy加载"""

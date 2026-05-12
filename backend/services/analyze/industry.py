@@ -11,6 +11,8 @@ import re
 from datetime import date
 from typing import Any
 
+import pandas as pd
+
 from backend.services.financial_service import get_concept_board_data
 from backend.services.external.csv_client import get_industry_data
 
@@ -231,29 +233,68 @@ class IndustryAnalyzer:
 
     @staticmethod
     def compute_board_from_stocks(board_name: str) -> dict | None:
-        """从个股行情聚合计算概念板块指标（兜底）"""
+        """从个股行情聚合计算概念板块指标（兜底：CSV关键词匹配 → akshare）"""
+        # 方案1: CSV关键词匹配（akshare挂掉时最可靠的方案）
+        try:
+            from backend.services.external.csv_client import find_latest_csv, _read_csv
+            csv_path = find_latest_csv()
+            if csv_path:
+                df = _read_csv(csv_path)
+                if df is not None and not df.empty:
+                    raw = board_name
+                    stripped = re.sub(r"(概念|板块|行业|产业|相关|应用|服务|材料|设备|制造|运营)$", "", raw).strip()
+                    if not stripped:
+                        stripped = raw
+                    keywords = set()
+                    if stripped:
+                        keywords.add(stripped)
+                    for i in range(0, len(stripped) - 1, 1):
+                        bigram = stripped[i:i+2]
+                        if len(bigram) >= 2:
+                            keywords.add(bigram)
+                    mask = pd.Series([False] * len(df))
+                    for kw in keywords:
+                        if len(kw) < 2:
+                            continue
+                        mask |= df["所属行业"].astype(str).str.contains(kw, na=False)
+                        mask |= df["名称"].astype(str).str.contains(kw, na=False)
+                    matched = df[mask].copy()
+                    valid = matched[matched["涨幅"].notna()]
+                    if not valid.empty:
+                        avg = round(float(valid["涨幅"].mean()), 2)
+                        up = int((valid["涨幅"] > 0).sum())
+                        down = int((valid["涨幅"] < 0).sum())
+                        sorted_s = valid.nlargest(5, "涨幅")
+                        return {
+                            "change_pct": avg, "up_count": up, "down_count": down,
+                            "leader": sorted_s.iloc[0]["名称"] if not sorted_s.empty else "--",
+                            "leader_chg": float(sorted_s.iloc[0]["涨幅"]) if not sorted_s.empty else None,
+                            "_fallback": True, "_fallback_source": "csv_keyword",
+                            "_matched_count": len(valid),
+                        }
+        except Exception:
+            pass
+
+        # 方案2: akshare（兜底兜底）
         from backend.services.external.csv_client import get_board_stocks_detail
         try:
             stocks = get_board_stocks_detail(board_name)
-            if not stocks:
-                return None
-            changes = [s.get("change_pct") for s in stocks if s.get("change_pct") is not None]
-            if not changes:
-                return None
-            avg = round(sum(changes) / len(changes), 2)
-            up = sum(1 for c in changes if c > 0)
-            down = sum(1 for c in changes if c < 0)
-            leaders = sorted(stocks, key=lambda s: float(s.get("change_pct", 0) or 0), reverse=True)
-            return {
-                "change_pct": avg,
-                "up_count": up,
-                "down_count": down,
-                "leader": leaders[0].get("name", "--") if leaders else "--",
-                "leader_chg": leaders[0].get("change_pct") if leaders else None,
-                "_fallback": True,
-            }
+            if stocks:
+                changes = [s.get("change_pct") for s in stocks if s.get("change_pct") is not None]
+                if changes:
+                    avg = round(sum(changes) / len(changes), 2)
+                    up = sum(1 for c in changes if c > 0)
+                    down = sum(1 for c in changes if c < 0)
+                    leaders = sorted(stocks, key=lambda s: float(s.get("change_pct", 0) or 0), reverse=True)
+                    return {
+                        "change_pct": avg, "up_count": up, "down_count": down,
+                        "leader": leaders[0].get("name", "--") if leaders else "--",
+                        "leader_chg": leaders[0].get("change_pct") if leaders else None,
+                        "_fallback": True,
+                    }
         except Exception:
-            return None
+            pass
+        return None
 
     # ── 行业景气周期 + 供需矛盾 + 量化预测 ──────────────
 
