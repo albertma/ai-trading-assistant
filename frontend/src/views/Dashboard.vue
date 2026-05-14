@@ -37,12 +37,33 @@
                         {{ dataSession === 'noon' ? '🌤 午市' : '🌙 收盘' }}
                     </el-tag>
                 </el-col>
-                <el-col :span="8" style="text-align:right;">
+                <el-col :span="3" style="text-align:center;">
+                    <el-button v-if="dataDate" size="small" type="warning" plain
+                        @click="handleRefreshMarket" :loading="refreshing" :disabled="refreshing">
+                        {{ refreshing ? '下载中...' : '🔄 重新下载' }}
+                    </el-button>
+                </el-col>
+                <el-col :span="5" style="text-align:right;">
                     <el-tag v-if="dataDate" :type="marketSentiment.type" effect="dark" size="large">
                         {{ marketSentiment.text }}
                     </el-tag>
                 </el-col>
             </el-row>
+        </el-card>
+
+        <!-- 每日操盘笔记 -->
+        <el-card v-if="dailyNote" shadow="hover" style="margin-bottom:16px;"
+            :style="{ borderLeft: '4px solid #e6a23c', background: '#fdf6ec' }">
+            <template #header>
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <b>📝 操盘笔记 ({{ dataDate || '今日' }})</b>
+                    <el-button size="small" type="warning" plain @click="editingNote = !editingNote">
+                        {{ editingNote ? '完成' : '编辑' }}
+                    </el-button>
+                </div>
+            </template>
+            <div v-if="!editingNote" style="font-size:13px;color:#856404;line-height:1.7;white-space:pre-wrap;">{{ dailyNote }}</div>
+            <el-input v-else v-model="dailyNote" type="textarea" :rows="3" placeholder="输入操盘笔记..." />
         </el-card>
 
         <!-- 沪深300 vs 中证500 双轴对比图 -->
@@ -258,8 +279,9 @@
 
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
-import { getMarketOverview, getMarketDates, getSentimentCycle, getIndexHistory } from '../api/index.js'
+import { getMarketOverview, getMarketDates, getSentimentCycle, getIndexHistory, getDailyNote, saveDailyNote, refreshMarketData } from '../api/index.js'
 import * as echarts from 'echarts'
+import { ElMessage } from 'element-plus'
 
 const loading = ref(true)
 const noData = ref(false)
@@ -277,6 +299,13 @@ const currentCycleStage = ref('')
 const cycleAssessment = ref({})
 const cycleCollapsed = ref(false)
 const cycleLoading = ref(false)
+
+// 每日操盘笔记
+const dailyNote = ref('')
+const editingNote = ref(false)
+
+// 手动刷新行情
+const refreshing = ref(false)
 
 // 指数双轴图
 const indexChartRef = ref(null)
@@ -552,6 +581,53 @@ onMounted(async () => {
     await loadSentimentCycle()
     // 加载指数历史
     await loadIndexHistory()
+    // 加载每日笔记
+    await loadDailyNote()
+})
+
+// 日期切换时重新加载笔记
+watch(selectedDate, async () => {
+    await loadDailyNote()
+})
+
+async function handleRefreshMarket() {
+    const d = selectedDate.value || dataDate.value
+    if (!d) return
+    refreshing.value = true
+    try {
+        const { data } = await refreshMarketData(d)
+        if (data.status === 'ok') {
+            ElMessage.success(`✅ ${d} 行情已重新下载`)
+            // 重新加载页面数据
+            await loadData(d)
+            await loadSentimentCycle()
+            await loadIndexHistory()
+        } else {
+            ElMessage.error(data.message || '下载失败')
+        }
+    } catch (e) {
+        ElMessage.error(e.response?.data?.detail || '请求失败')
+    } finally {
+        refreshing.value = false
+    }
+}
+
+async function loadDailyNote() {
+    const d = selectedDate.value || dataDate.value
+    if (!d) { dailyNote.value = ''; return }
+    try {
+        const { data } = await getDailyNote(d)
+        dailyNote.value = data.note || ''
+    } catch { dailyNote.value = '' }
+}
+
+watch(editingNote, async (v) => {
+    if (!v && dailyNote.value && (selectedDate.value || dataDate.value)) {
+        // 退出编辑模式时自动保存
+        const d = selectedDate.value || dataDate.value
+        try { await saveDailyNote(d, dailyNote.value.trim()) }
+        catch { /* ignore */ }
+    }
 })
 </script>
 

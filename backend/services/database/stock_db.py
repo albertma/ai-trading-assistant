@@ -61,6 +61,13 @@ def init_db():
             triggered INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
+        CREATE TABLE IF NOT EXISTS contradiction_ai_cache (
+            code TEXT NOT NULL,
+            report_period TEXT NOT NULL,
+            thinking_questions TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            PRIMARY KEY (code, report_period)
+        );
         CREATE TABLE IF NOT EXISTS analysis_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             code TEXT NOT NULL,
@@ -1289,3 +1296,34 @@ def mark_reminder_triggered(reminder_id: int) -> bool:
     conn.commit()
     conn.close()
     return cur.rowcount > 0
+
+
+# ===== 矛盾分析AI缓存 =====
+
+def get_contradiction_ai_cache(code: str, report_period: str) -> list | None:
+    conn = get_db()
+    row = conn.execute(
+        "SELECT thinking_questions FROM contradiction_ai_cache WHERE code = ? AND report_period = ?",
+        (code, report_period),
+    ).fetchone()
+    conn.close()
+    if row:
+        import json
+        return json.loads(row["thinking_questions"])
+    return None
+
+
+def save_contradiction_ai_cache(code: str, report_period: str, thinking_questions: list) -> bool:
+    import json
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO contradiction_ai_cache (code, report_period, thinking_questions) VALUES (?, ?, ?)",
+            (code, report_period, json.dumps(thinking_questions, ensure_ascii=False)),
+        )
+        conn.commit()
+        return True
+    except:
+        return False
+    finally:
+        conn.close()

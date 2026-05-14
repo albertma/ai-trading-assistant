@@ -483,184 +483,217 @@ class ContradictionEngine:
             c["rank"] = i + 1
         return contradictions
 
-    # ── 第四层：思考问题生成 ──────────────────
+    # ── 第四层：思考问题生成（AI驱动）──────────
 
     def _generate_thinking_questions(self, contradictions: list[dict],
                                      dialectics: dict) -> list[dict]:
         """
-        根据矛盾分析结果生成「代码做不到、需要人思考」的问题。
+        基于实际数据分析 + AI推理，生成针对这家公司具体情况的思考问题。
         每个问题包含：分类、问题本身、触发原因、思考方向。
-        不是硬编码模板，而是基于实际数据模式动态生成。
         """
+        # ── 构建输入数据 ──
+        lines = [f"股票: {self.name} ({self.code})", f"行业: {self.sector_name or '未知'}"]
+        lines.append("")
+
+        # 财务摘要
+        fin = {
+            "毛利率": _parse_fin_val(self.indicators.get("销售毛利率(%)")),
+            "净利润增长率": _parse_fin_val(self.indicators.get("净利润增长率(%)")),
+            "营收增长率": _parse_fin_val(self.indicators.get("主营业务收入增长率(%)")),
+            "资产负债率": _parse_fin_val(self.indicators.get("资产负债率(%)")),
+            "ROE": _parse_fin_val(self.indicators.get("净资产收益率(%)")),
+            "PE": self.pe,
+            "PB": self.pb,
+            "市值(亿)": _parse_fin_val(self.indicators.get("总市值(元)")),
+        }
+        valid_fin = {k: v for k, v in fin.items() if v is not None}
+        if valid_fin:
+            lines.append("【财务数据】")
+            for k, v in valid_fin.items():
+                lines.append(f"  {k}: {v}")
+            lines.append("")
+
+        # 行情
+        if self.cur_price is not None or self.chg_pct is not None:
+            lines.append("【行情】")
+            if self.cur_price is not None:
+                lines.append(f"  现价: {self.cur_price}")
+            if self.chg_pct is not None:
+                lines.append(f"  当日涨跌: {self.chg_pct:+.2f}%")
+            lines.append("")
+
+        # 行业对比
+        if self.industry_avg_chg is not None or self.industry_rank is not None:
+            lines.append("【行业定位】")
+            if self.industry_avg_chg is not None:
+                lines.append(f"  行业平均涨幅: {self.industry_avg_chg:+.2f}%")
+            if self.industry_rank is not None and self.industry_total is not None:
+                lines.append(f"  板块排名: {self.industry_rank}/{self.industry_total}")
+            lines.append("")
+
+        # 矛盾评分
+        lines.append("【矛盾分析结果】")
+        for c in contradictions:
+            lines.append(f"  {c['icon']} {c['name']}: {c.get('pct',0)}% — {c.get('desc','')}")
+        lines.append(f"  总分: {sum(c.get('pct',0) for c in contradictions)}/{len(contradictions)*100}")
+        lines.append("")
+
+        # 辩证分析
+        lines.append("【矛盾动量变化】")
+        for m in dialectics.get("momentum", []):
+            chg = m.get("score_change", 0)
+            lines.append(f"  {m['name']}: Δ{chg:+.1f} 排名变化:{m.get('rank_change',0)}")
+        lines.append("")
+
+        lcs = dialectics.get("lifecycle", [])
+        if lcs:
+            lines.append("【矛盾生命周期】")
+            for lc in lcs:
+                lines.append(f"  {lc['name']}: {lc.get('stage','未知')}")
+            lines.append("")
+
+        conv = dialectics.get("convergence", {})
+        if conv:
+            lines.append(f"【收敛性】{conv.get('status','未知')} — {conv.get('detail','')}")
+            lines.append("")
+
+        context = "\n".join(lines)
+
+        # ── 缓存检查：code + report_period ──
+        from backend.services.db_client import get_contradiction_ai_cache, save_contradiction_ai_cache
+        report_period = ""
+        if self.fin_records:
+            last = self.fin_records[-1]
+            report_period = last.get("报告期") or last.get("period") or last.get("财报日期", "")
+
+        if report_period:
+            cached = get_contradiction_ai_cache(self.code, report_period)
+            if cached:
+                log.info(f"矛盾分析AI缓存命中: {self.code} @ {report_period}")
+                return cached
+
+        PROMPT = """你是一位深入理解辩证法的投研分析师。给定一只股票的矛盾分析数据和财务信息，请生成最关键的思考问题。
+
+要求：
+1. 生成 2-4 个核心问题，每一个都必须基于具体数据特征触发，不是泛泛而谈
+2. 问题要帮助投资者看到「代码算不出、需要人判断」的维度
+3. 包含：投资逻辑的盲区、数据的内在矛盾、需要外部验证的假设
+
+返回 JSON 数组，格式：
+[
+  {
+    "category": "分类名（如 成本结构/负债质量/矛盾转化/预期差/系统风险）",
+    "icon": "emoji",
+    "question": "具体问题（30-80字，直击核心）",
+    "trigger": "触发条件的简要说明",
+    "think_along": "思考方向提示（20-50字）"
+  }
+]
+
+如果数据不足以生成有意义的分析，返回 []。
+只返回 JSON，不要包含其他文字。"""
+
+        try:
+            from openai import OpenAI
+            import yaml
+            from pathlib import Path
+
+            config_path = Path.home() / ".hermes" / "config.yaml"
+            cfg = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
+            providers = cfg.get("custom_providers", [])
+            ai_client = None
+            for p in providers:
+                if p.get("name") == "deepseek-v4-flash":
+                    ai_client = OpenAI(api_key=p["api_key"], base_url=p["base_url"])
+                    break
+            if not ai_client:
+                ai_client = OpenAI(api_key=cfg.get("model", {}).get("api_key", ""),
+                                   base_url="https://api.deepseek.com")
+
+            resp = ai_client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": PROMPT},
+                    {"role": "user", "content": f"分析以下数据，生成思考问题：\n\n{context}"},
+                ],
+                temperature=0.5,
+                max_tokens=1500,
+            )
+            raw = resp.choices[0].message.content.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            import json as _json
+            questions = _json.loads(raw.strip())
+            if isinstance(questions, list):
+                # 写入缓存
+                if report_period:
+                    try:
+                        save_contradiction_ai_cache(self.code, report_period, questions[:6])
+                    except Exception:
+                        pass
+                return questions[:6]
+        except Exception:
+            log.warning(f"AI思考问题生成失败，回退默认逻辑", exc_info=True)
+
+        # ── 回退：硬编码逻辑 ──
+        return self._fallback_questions(contradictions, dialectics)
+
+    def _fallback_questions(self, contradictions, dialectics):
+        """AI失败时的回退方案：精简版硬编码问题"""
         questions = []
-        momentum_map = {m["id"]: m for m in (dialectics.get("momentum") or [])}
-        lifecycle_map = {l["id"]: l for l in (dialectics.get("lifecycle") or [])}
-        convergence = dialectics.get("convergence", {})
         c_map = {c["id"]: c for c in contradictions}
+        momentum_map = {m["id"]: m for m in (dialectics.get("momentum") or [])}
 
-        # ── 1. 成本/盈利性质问题 ──
         gross_margin = _parse_fin_val(self.indicators.get("销售毛利率(%)"))
-        net_profit_growth = _parse_fin_val(self.indicators.get("净利润增长率(%)"))
         revenue_growth = _parse_fin_val(self.indicators.get("主营业务收入增长率(%)"))
+        net_profit_growth = _parse_fin_val(self.indicators.get("净利润增长率(%)"))
         debt_ratio = _parse_fin_val(self.indicators.get("资产负债率(%)"))
-        roe = _parse_fin_val(self.indicators.get("净资产收益率(%)"))
-        cur_price = _flt(self.cur_price)
-        chg_pct = _flt(self.chg_pct)
 
-        # 毛利负 + 营收增长
+        # 毛利与收入背离
         if gross_margin is not None and gross_margin < 0:
-            if revenue_growth is not None and revenue_growth > 0:
-                questions.append({
-                    "category": "成本结构",
-                    "icon": "🏭",
-                    "question": "毛利率为负但营收在增长——当前亏损是扩张期的阵痛（资本开支大），还是商业模式本身有问题？",
-                    "trigger": f"毛利率{gross_margin}%，营收增长{revenue_growth}%",
-                    "think_along": "检查净利润和经营性现金流的方向是否一致。如果净利改善但经营现金流没跟上，亏损可能不是临时的。",
-                })
-            else:
-                questions.append({
-                    "category": "成本结构",
-                    "icon": "🏭",
-                    "question": "毛利率为负且营收也在萎缩——这是行业周期下行还是公司竞争力出了结构性变化？",
-                    "trigger": f"毛利率{gross_margin}%，营收增长{revenue_growth}%",
-                    "think_along": "区分行业β（全行业毛利率下行） vs 公司α（竞争对手在盈利而你不在）。如果全行业都在亏，可能是周期底部信号。",
-                })
+            questions.append({
+                "category": "成本结构", "icon": "🏭",
+                "question": "毛利率为负——当前亏损是扩张期阵痛还是结构性问题？",
+                "trigger": f"毛利率{gross_margin}%", "think_along": "检查经营现金流与净利润方向是否一致。"
+            })
 
-        # 营收增长快但净利没跟上
+        # 增收不增利
         if (revenue_growth is not None and net_profit_growth is not None
                 and revenue_growth > 15 and net_profit_growth < 5):
             questions.append({
-                "category": "盈利质量",
-                "icon": "📈",
-                "question": "营收增长快但利润没同步跟上——增长是靠降价换量还是费用失控了？这个增长质量值得继续持有吗？",
-                "trigger": f"营收增长{revenue_growth}%，净利增长{net_profit_growth}%",
-                "think_along": "查看销售费用率和管理费用率的变化。如果费用率在快速上升，增长可持续性存疑。",
+                "category": "盈利质量", "icon": "📈",
+                "question": "营收增长快但利润没跟上——增长靠降价换量还是费用失控？",
+                "trigger": f"营收{revenue_growth}%/净利{net_profit_growth}%",
+                "think_along": "查看销售/管理费用率变化，判断增长可持续性。"
             })
 
-        # ── 2. 负债质量问题 ──
-        debt_c = c_map.get("debt_safety", {})
-        debt_momo = momentum_map.get("debt_safety", {})
-        debt_pct = debt_c.get("pct", 0) or 0
-        debt_chg = debt_momo.get("score_change", 0) or 0
-        debt_signal = debt_momo.get("signal", {})
-
-        if debt_pct >= 40 or debt_chg > 3:
-            # 判断负债是投入产能还是补贴亏损
-            q = {
-                "category": "负债质量",
-                "icon": "🏛️",
-                "trigger": f"负债矛盾度{debt_pct}%，分数变化{debt_chg:+.1f}",
-                "think_along": "查看财报附注：新增负债是用于资本开支（建厂房买设备）还是日常运营（发工资付利息）。前者是投资，后者是失血。",
-            }
-            if gross_margin is not None and gross_margin < 0:
-                q["question"] = "毛利率为负的同时负债在增加——新增负债是在建产能（未来能产生现金流），还是在补贴亏损（不可持续）？"
-            else:
-                q["question"] = "负债矛盾在激化——这笔新增负债是去建产能（能产生未来现金流），还是用来补充运营资金（不可持续）？这决定了矛盾是「时间错配」还是「结构性问题」。"
-            questions.append(q)
-
-        # ── 3. 主要矛盾的转化信号 ──
+        # 主要矛盾
         primary = contradictions[0] if contradictions else None
         if primary:
             p_id = primary["id"]
             p_momo = momentum_map.get(p_id, {})
-            p_life = lifecycle_map.get(p_id, {})
-            p_pct = primary.get("pct", 0) or 0
             p_chg = p_momo.get("score_change", 0) or 0
-            p_stage = (p_life or {}).get("stage", "")
-
-            # 主矛盾生命周期相关的问题
-            if p_stage in ("激化期", "极值区"):
+            if p_chg > 5:
                 questions.append({
-                    "category": "矛盾转化",
-                    "icon": "🔄",
-                    "question": f"主要矛盾「{primary['name']}」处于{p_stage}——它在什么条件下会触发转化？转化后哪个矛盾会成为新的主要矛盾？",
-                    "trigger": f"'{primary['name']}' {p_stage}，矛盾度{p_pct}%",
-                    "think_along": f"分析{primary['name']}背后的外部变量（价格、政策、竞争格局）。转化通常来自外部变量的突变而非指标的渐变。想一想：外部变量变化时，会先影响哪个矛盾？",
-                })
-            elif p_stage == "转化期" and p_chg < -5:
-                questions.append({
-                    "category": "矛盾转化",
-                    "icon": "🔄",
-                    "question": f"主要矛盾「{primary['name']}」正在缓解——这是真的好转还是假缓和？转化后留下了什么新矛盾？",
-                    "trigger": f"'{primary['name']}' 分数下降{p_chg:+.1f}",
-                    "think_along": "去看经营性现金流和自由现金流是否同步改善。净利润改善但OCF没跟上 = 假缓和。",
+                    "category": "矛盾转化", "icon": "🔄",
+                    "question": f"主要矛盾「{primary['name']}」正在激化（Δ{p_chg:+.1f}）——推动它上升的关键变量是什么？",
+                    "trigger": f"Δ{p_chg:+.1f}，矛盾度{primary.get('pct',0)}%",
+                    "think_along": "分析外部变量（价格/政策/竞争）变化方向。"
                 })
 
-            # 主矛盾扬弃问题
-            if p_chg < -10 and len(contradictions) > 1:
-                secondary = contradictions[1]
-                questions.append({
-                    "category": "矛盾扬弃",
-                    "icon": "✨",
-                    "question": f"「{primary['name']}」在快速缓解——当它解决后，「{secondary['name']}」是否会成为新的主要矛盾？当前的持仓结构和应对策略需要调整吗？",
-                    "trigger": f"'{primary['name']}' Δ{p_chg:+.1f}，'{secondary['name']}'矛盾度{secondary.get('pct',0)}%",
-                    "think_along": f"列一个矛盾传导链：{primary['name']}缓解 → 股价可能？→ 哪个矛盾会因此激化？提前判断，不要在转化发生时被动应对。",
-                })
-
-        # ── 4. 次要矛盾的激化预警 ──
-        for c in contradictions[1:]:
-            c_momo = momentum_map.get(c["id"], {})
-            c_chg = c_momo.get("score_change", 0) or 0
-            if c_chg > 5 and c.get("pct", 0) >= 30:
-                # 找它和主要矛盾的关联
-                relation_hint = ""
-                if primary:
-                    relation_hint = f"当前主要矛盾是「{primary['name']}」——"
-                questions.append({
-                    "category": "激化预警",
-                    "icon": "⚠️",
-                    "question": f"「{c['name']}」正在快速激化（Δ{c_chg:+.1f}）。{relation_hint}如果在现有矛盾尚未解决的情况下，这个新矛盾也爆发了，会出现多矛盾并发的情况吗？",
-                    "trigger": f"'{c['name']}' 分数上升{c_chg:+.1f}，矛盾度{c.get('pct',0)}%",
-                    "think_along": "看这个矛盾激化的驱动力是外因（行业、宏观）还是内因（公司经营）。外因驱动的激化更难预测拐点。",
-                })
-
-        # ── 5. 系统性收敛/发散 ──
-        if convergence.get("status") == "divergent":
+        # 多矛盾发散
+        conv = dialectics.get("convergence", {})
+        if conv.get("status") == "divergent":
             questions.append({
-                "category": "系统风险",
-                "icon": "🌪️",
-                "question": f"{convergence['detail']}——多个矛盾同时指向不同方向，说明投资逻辑不清晰。你是应该等信号收敛再行动，还是说这就是你看到的「不确定性溢价」机会？",
-                "trigger": f"{convergence.get('conflict_count',0)}个矛盾同时突出",
-                "think_along": "发散期的投资逻辑往往需要更长的持有周期来兑现。想一想：你的持有周期是否匹配这个矛盾发散的状态？",
-            })
-        elif convergence.get("status") == "convergent":
-            questions.append({
-                "category": "系统信号",
-                "icon": "🎯",
-                "question": f"{convergence['detail']}——但矛盾方向一致也可能意味着「没人发现不一样的东西」。最可能被忽视的第三个矛盾是什么？",
-                "trigger": f"{convergence.get('aligned_count',0)}个矛盾方向一致",
-                "think_along": "找那个分数最低、排名最后的矛盾——它的低分是真的没问题，还是数据没捕捉到潜在风险？",
+                "category": "系统风险", "icon": "🌪️",
+                "question": "多个矛盾方向不一，投资逻辑不清晰——该等信号收敛还是这就是机会？",
+                "trigger": f"{conv.get('conflict_count',0)}个矛盾突出",
+                "think_along": "发散期需要更长持有周期，你的周期匹配吗？"
             })
 
-        # ── 6. 价格 vs 价值的预期差 ──
-        pv_c = c_map.get("price_value", {})
-        growth_c = c_map.get("growth_valuation", {})
-        quality_c = c_map.get("quality_cashflow", {})
-
-        if pv_c and growth_c:
-            pv_pct = pv_c.get("pct", 50) or 50
-            gv_pct = growth_c.get("pct", 50) or 50
-            if pv_pct >= 50 and gv_pct >= 50:
-                questions.append({
-                    "category": "预期差",
-                    "icon": "🎲",
-                    "question": f"价格vs价值和成长vs估值同时处于高矛盾状态——市场对这只股票的定价存在严重分歧。谁是对的？你需要什么样的信息才能做出判断？",
-                    "trigger": f"'价格vs价值'{pv_pct}%，'成长vs估值'{gv_pct}%",
-                    "think_along": "这种双高矛盾往往意味着市场在重新定价。去翻最近的卖方报告和业绩会纪要——分歧的核心是什么？是你知道但市场不知道的信息吗？",
-                })
-
-        # 去重（相同分类+问题的只保留一个），限制最多6个
-        seen = set()
-        unique = []
-        for q in questions:
-            key = (q["category"], q["question"][:40])
-            if key not in seen:
-                seen.add(key)
-                unique.append(q)
-                if len(unique) >= 6:
-                    break
-
-        return unique
+        return questions[:6]
 
     def analyze(self) -> dict:
         """执行全量矛盾分析"""

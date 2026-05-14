@@ -1,10 +1,14 @@
 """复盘报告 API"""
 from fastapi import APIRouter, HTTPException
 from datetime import date
+import json
 import os
 from pathlib import Path
 
 from backend.config import REPORT_DIR
+
+# 每日操盘笔记存储路径
+NOTES_DIR = Path.home() / "Jarvis" / "daily_notes"
 
 router = APIRouter()
 
@@ -92,3 +96,27 @@ def report_by_date(report_date: str):
         return {"date": report_date, "title": f"非A股持仓复盘 {report_date}", "content": content}
 
     raise HTTPException(404, f"未找到 {report_date} 的复盘报告")
+
+
+# ===== 每日操盘笔记 =====
+
+def _notes_path(d: str = None) -> Path:
+    NOTES_DIR.mkdir(parents=True, exist_ok=True)
+    d = d or date.today().isoformat()
+    return NOTES_DIR / f"{d}.json"
+
+
+@router.get("/notes/{report_date}")
+def get_daily_note(report_date: str):
+    f = _notes_path(report_date)
+    if f.exists():
+        return {"date": report_date, "note": json.loads(f.read_text("utf-8"))}
+    return {"date": report_date, "note": ""}
+
+
+@router.put("/notes/{report_date}")
+def save_daily_note(report_date: str, data: dict):
+    f = _notes_path(report_date)
+    note = (data or {}).get("note", "").strip()
+    f.write_text(json.dumps(note, ensure_ascii=False), "utf-8")
+    return {"status": "ok", "date": report_date}

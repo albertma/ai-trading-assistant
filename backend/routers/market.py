@@ -446,3 +446,29 @@ def index_history(days: int = Query(60, le=730)):
         })
 
     return {"hs300": hs300, "zz500": zz500, "ratio": ratio}
+
+
+# ===== 手动刷新行情数据 =====
+
+@router.post("/refresh")
+def refresh_market_data(date_param: str = Query(None, description="日期 YYYY-MM-DD，默认今天"), suffix: str = Query("", description="文件名后缀")):
+    """手动触发拉取当日行情数据"""
+    import subprocess, sys
+    from datetime import date
+    if not date_param:
+        date_param = date.today().isoformat()
+    cmd = [sys.executable, str(Path.home() / "Jarvis" / "fetch_a_stock_data.py"), "--date", date_param]
+    if suffix:
+        cmd.extend(["--suffix", suffix])
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        return {
+            "status": "ok" if r.returncode == 0 else "error",
+            "date": date_param,
+            "stdout": r.stdout.strip().split("\n")[-5:],
+            "stderr": r.stderr.strip().split("\n")[-5:],
+        }
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "date": date_param, "message": "数据拉取超时（>5分钟）"}
+    except Exception as e:
+        return {"status": "error", "date": date_param, "message": str(e)}

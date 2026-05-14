@@ -167,6 +167,86 @@
                         </div>
                     </el-card>
 
+                    <!-- ①-b'' AI预测 -->
+                    <el-card shadow="hover" style="margin-bottom:12px;" :style="{ borderLeft: '4px solid #9b59b6' }">
+                        <template #header>
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <b>🔮 AI趋势预测</b>
+                                <el-button size="small" type="primary" plain
+                                    @click="handlePredict"
+                                    :loading="predicting"
+                                    :disabled="predicting">
+                                    {{ predicting ? '分析中...' : '运行预测' }}
+                                </el-button>
+                            </div>
+                        </template>
+                        <!-- 加载中 -->
+                        <div v-if="predicting" style="text-align:center;padding:20px;">
+                            <el-icon class="is-loading" :size="24"><Loading /></el-icon>
+                            <p style="color:#909399;font-size:13px;margin-top:8px;">正在分析历史周期和形态...</p>
+                        </div>
+                        <!-- 预测结果 -->
+                        <div v-else-if="prediction" class="prediction-result">
+                            <!-- 方向 + 置信度 -->
+                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                                <el-tag v-if="prediction.prediction?.trend_direction === '看涨'"
+                                    type="success" size="large" effect="dark" style="font-size:16px;padding:4px 12px;">
+                                    📈 {{ prediction.prediction.trend_direction }}
+                                </el-tag>
+                                <el-tag v-else-if="prediction.prediction?.trend_direction === '看跌'"
+                                    type="danger" size="large" effect="dark" style="font-size:16px;padding:4px 12px;">
+                                    📉 {{ prediction.prediction.trend_direction }}
+                                </el-tag>
+                                <el-tag v-else-if="prediction.prediction?.trend_direction === '震荡'"
+                                    type="warning" size="large" effect="dark" style="font-size:16px;padding:4px 12px;">
+                                    〰️ {{ prediction.prediction.trend_direction }}
+                                </el-tag>
+                                <el-progress v-if="prediction.prediction?.confidence != null"
+                                    type="circle" :percentage="prediction.prediction.confidence"
+                                    :width="50" :stroke-width="4"
+                                    :color="prediction.prediction.confidence >= 70 ? '#67c23a' : prediction.prediction.confidence >= 50 ? '#e6a23c' : '#909399'" />
+                                <el-tag v-if="prediction.prediction?.cycle_phase" type="info" effect="plain">
+                                    {{ prediction.prediction.cycle_phase }}
+                                </el-tag>
+                            </div>
+                            <!-- 目标价 -->
+                            <div v-if="prediction.prediction?.target_price" style="display:flex;gap:16px;margin-bottom:10px;">
+                                <div v-if="prediction.prediction.target_price.up" style="background:#fef0f0;padding:6px 12px;border-radius:6px;">
+                                    <span style="color:#f56c6c;font-size:12px;">📈 目标上限</span>
+                                    <div style="font-weight:bold;color:#f56c6c;">¥{{ prediction.prediction.target_price.up.toFixed(2) }}</div>
+                                </div>
+                                <div v-if="prediction.prediction.target_price.down" style="background:#f0f9eb;padding:6px 12px;border-radius:6px;">
+                                    <span style="color:#67c23a;font-size:12px;">📉 目标下限</span>
+                                    <div style="font-weight:bold;color:#67c23a;">¥{{ prediction.prediction.target_price.down.toFixed(2) }}</div>
+                                </div>
+                                <div style="background:#f5f7fa;padding:6px 12px;border-radius:6px;">
+                                    <span style="color:#909399;font-size:12px;">💰 现价</span>
+                                    <div style="font-weight:bold;">¥{{ prediction.current_price }}</div>
+                                </div>
+                            </div>
+                            <!-- 关键位 -->
+                            <div v-if="prediction.prediction?.key_levels" style="display:flex;gap:16px;margin-bottom:10px;font-size:12px;">
+                                <div><span style="color:#67c23a;">🛡️ 支撑: </span>{{ prediction.prediction.key_levels.support?.join(' / ') }}</div>
+                                <div><span style="color:#f56c6c;">🚧 阻力: </span>{{ prediction.prediction.key_levels.resistance?.join(' / ') }}</div>
+                            </div>
+                            <!-- 推理 -->
+                            <div v-if="prediction.prediction?.reasoning" style="font-size:13px;color:#303133;line-height:1.6;margin-bottom:8px;background:#f5f7fa;padding:10px;border-radius:6px;">
+                                {{ prediction.prediction.reasoning }}
+                            </div>
+                            <!-- 风险提示 -->
+                            <div v-if="prediction.prediction?.risk_warning" style="font-size:12px;color:#e6a23c;background:#fdf6ec;padding:6px 10px;border-radius:4px;">
+                                ⚠️ {{ prediction.prediction.risk_warning }}
+                            </div>
+                            <!-- 近期形态 -->
+                            <div v-if="prediction.patterns?.length" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;">
+                                <el-tag v-for="(p, pi) in prediction.patterns" :key="pi" size="mini" type="info" effect="plain">{{ p }}</el-tag>
+                            </div>
+                        </div>
+                        <div v-else-if="!predicting" style="color:#909399;font-size:13px;padding:12px 0;text-align:center;">
+                            点击「运行预测」，基于历史周期+K线形态+AI推理判断未来方向
+                        </div>
+                    </el-card>
+
                     <!-- ①-c 技术面详情（有数据时才显示） -->
                     <el-card v-if="profileData" shadow="hover" style="margin-bottom:12px;">
                         <el-descriptions :column="4" border size="mini">
@@ -445,7 +525,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { getWatchlist, addWatchItem, removeWatchItem, updateWatchItem, getStockProfile, searchStockInfo, saveSnapshot, deleteSnapshot, deleteDraft, addPosition, deletePosition, getPositions, addStockNote, deleteStockNote, getStockReminders, addStockReminder, deleteStockReminder, toggleStockReminder, getAllActiveReminders } from '../api/index.js'
+import { getWatchlist, addWatchItem, removeWatchItem, updateWatchItem, getStockProfile, searchStockInfo, saveSnapshot, deleteSnapshot, deleteDraft, addPosition, deletePosition, getPositions, addStockNote, deleteStockNote, getStockReminders, addStockReminder, deleteStockReminder, toggleStockReminder, getAllActiveReminders, predictStockTrend } from '../api/index.js'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
@@ -641,6 +721,7 @@ function selectItem(item) {
     detailHist.value = null
     stockNotes.value = []
     stockReminders.value = []
+    prediction.value = null
     showAddNoteInput.value = false
     newNoteText.value = ''
 
@@ -788,6 +869,24 @@ async function handleToggleReminder(r) {
         await toggleStockReminder(selected.value.code, r.id)
         r.enabled = r.enabled ? 0 : 1
     } catch { ElMessage.error('操作失败') }
+}
+
+// ===== AI趋势预测 =====
+const predicting = ref(false)
+const prediction = ref(null)
+
+async function handlePredict() {
+    if (!selected.value?.code) return
+    predicting.value = true
+    prediction.value = null
+    try {
+        const { data } = await predictStockTrend(selected.value.code)
+        prediction.value = data
+    } catch (e) {
+        ElMessage.error(e.response?.data?.detail || '预测失败')
+    } finally {
+        predicting.value = false
+    }
 }
 
 // ===== 分析 =====

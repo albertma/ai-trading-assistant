@@ -27,6 +27,14 @@ export function getIndexHistory(days = 60) {
     return api.get('/market/index-history', { params: { days } })
 }
 
+// ========== 手动刷新行情 ==========
+export function refreshMarketData(dateParam, suffix = '') {
+    const params = {}
+    if (dateParam) params.date_param = dateParam
+    if (suffix) params.suffix = suffix
+    return api.post('/market/refresh', null, { params, timeout: 300000 })
+}
+
 // ========== 持仓 ==========
 export function getPositions() {
     return api.get('/positions')
@@ -161,6 +169,11 @@ export function getAllActiveReminders() {
     return api.get('/profile/reminders/active')
 }
 
+// ========== AI预测 ==========
+export function predictStockTrend(code) {
+    return api.get(`/predict/${code}`, { timeout: 120000 })
+}
+
 export function saveSnapshot(code, data) {
     return api.post(`/profile/${code}/save-snapshot`, data)
 }
@@ -208,6 +221,13 @@ export function getReportByDate(date) {
 
 export function getReportList() {
     return api.get('/reports/list')
+}
+
+export function saveDailyNote(date, note) {
+    return api.put(`/reports/notes/${date}`, { note })
+}
+export function getDailyNote(date) {
+    return api.get(`/reports/notes/${date}`)
 }
 
 export default api

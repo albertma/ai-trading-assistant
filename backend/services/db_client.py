@@ -17,6 +17,9 @@ from backend.services.database.stock_db import (
     add_reminder, get_reminders, get_all_active_reminders,
     delete_reminder, toggle_reminder, mark_reminder_triggered,
 
+    # 矛盾分析AI缓存
+    get_contradiction_ai_cache, save_contradiction_ai_cache,
+
     # 快照/草稿
     save_snapshot, delete_snapshot, get_snapshots,
     save_draft_notes, get_draft_notes, delete_draft,
