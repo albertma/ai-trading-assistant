@@ -422,6 +422,9 @@ def save_snapshot(code: str, name: str, sector: str, data: dict, notes: str = ''
             analysis_json,
         ))
         conn.commit()
+        # 保存快照后自动清理草稿
+        conn.execute("DELETE FROM stock_archive WHERE code = ?", (code,))
+        conn.commit()
         return cur.lastrowid
     except Exception:
         return None
@@ -653,7 +656,40 @@ def prune_kline(code: str = None, max_days: int = KLINE_MAX_DAYS) -> int:
 
 def fetch_and_save_kline(code: str, days: int = 400) -> tuple[bool, int]:
     import json, urllib.request
-    # 策略1: akshare
+
+    # 检测市场
+    _market = None
+    try:
+        conn = get_db()
+        row = conn.execute(
+            "SELECT market FROM stock_info WHERE code = ?", (code.strip(),)
+        ).fetchone()
+        conn.close()
+        if row and row[0]:
+            _market = row[0]
+    except Exception:
+        pass
+
+    # 美股 → ak.stock_us_daily
+    if _market in ("us_stock", "hk_stock", "crypto"):
+        try:
+            import akshare as ak
+            df = ak.stock_us_daily(symbol=code, adjust="")
+            records = []
+            for _, r in df.iterrows():
+                records.append({
+                    "date": str(r["date"]).split("T")[0].split(" ")[0],
+                    "open": float(r["open"]), "close": float(r["close"]),
+                    "high": float(r["high"]), "low": float(r["low"]),
+                    "volume": float(r["volume"]),
+                })
+            saved = save_kline_records(code, records)
+            pruned = prune_kline(code)
+            return True, saved
+        except Exception:
+            return False, 0
+
+    # 策略1: akshare（A股）
     try:
         import akshare as ak
         df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date="20000101", adjust="qfq")

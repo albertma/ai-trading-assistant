@@ -554,6 +554,35 @@
                         </el-col>
                     </el-row>
 
+                    <!-- 思考问题卡片 -->
+                    <el-card v-if="contradictionData.thinking_questions?.length" shadow="hover"
+                        style="margin-bottom:16px;border:1px solid #3a3a5e;background:linear-gradient(135deg,#1a1a2e,#1e1a2e);">
+                        <template #header>
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span style="font-size:18px;">🧠</span>
+                                <b style="color:#e0e0e0;">需要思考的问题</b>
+                                <el-tag size="small" type="warning" effect="dark" style="margin-left:auto;">
+                                    代码算不到，需要你来判断
+                                </el-tag>
+                            </div>
+                        </template>
+                        <div v-for="(q, qi) in contradictionData.thinking_questions" :key="qi"
+                            style="margin-bottom:12px;padding:12px;border-radius:8px;background:rgba(255,255,255,0.03);border-left:3px solid #e6a23c;">
+                            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                                <span>{{ q.icon }}</span>
+                                <el-tag size="small" type="info" effect="plain">{{ q.category }}</el-tag>
+                                <span style="font-size:12px;color:#909399;">触发: {{ q.trigger }}</span>
+                            </div>
+                            <p style="color:#ddd;font-size:14px;line-height:1.6;margin:6px 0;">
+                                {{ q.question }}
+                            </p>
+                            <div style="font-size:12px;color:#b0b0b0;background:rgba(64,158,255,0.06);padding:8px;border-radius:4px;">
+                                <span style="color:#409eff;">💡 思考方向: </span>{{ q.think_along }}
+                            </div>
+                        </div>
+                        <el-empty v-if="!contradictionData.thinking_questions?.length" description="当前无特别需要思考的问题" :image-size="60" />
+                    </el-card>
+
                     <!-- 选中矛盾的详细展开 -->
                     <el-card v-if="selectedContradiction" shadow="hover" style="margin-bottom:16px;border:1px solid #3a3a4e;">
                         <template #header>

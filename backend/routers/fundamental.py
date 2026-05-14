@@ -45,12 +45,115 @@ DB_PATH = os.path.expanduser("~/Jarvis/ai_trading/stock_archive.db")
 
 router = APIRouter()
 
+
+def _get_stock_market(code: str) -> str | None:
+    """从 stock_info 表查询所属市场"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute(
+            "SELECT market FROM stock_info WHERE code = ?", (code.strip(),)
+        ).fetchone()
+        conn.close()
+        if row and row[0]:
+            return row[0]
+    except Exception:
+        pass
+    return None
+
 # ============================================================
 # 1. 财务摘要 (akshare stock_financial_abstract_ths)
 # ============================================================
 def _get_financial_summary(code: str) -> dict | None:
-    """从外部模块获取财务摘要"""
+    """从外部模块获取财务摘要（美股自动路由到 Alpha Vantage）"""
+    _mkt = _get_stock_market(code)
+    if _mkt in ("us_stock", "crypto", "hk_stock"):
+        return _get_us_financial_summary(code)
     return get_financial_summary(code)
+
+
+def _get_us_financial_summary(code: str) -> dict | None:
+    """从 Alpha Vantage 获取美股财务摘要（A股records兼容格式）"""
+    from backend.services.external.alpha_vantage import get_us_stock_financial_report
+
+    def _av_float(v, default=0):
+        if v is None or v == 'None' or v == '':
+            return default
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return default
+
+    def _to_records(inc_list, bs_list, rtype: str):
+        if not inc_list or not bs_list:
+            return []
+        inc_by_date = {r["fiscalDateEnding"]: r for r in inc_list}
+        bs_by_date = {r["fiscalDateEnding"]: r for r in bs_list}
+        all_dates = sorted(set(list(inc_by_date.keys()) + list(bs_by_date.keys())), reverse=True)
+
+        def _prev_date(d: str) -> str | None:
+            dt = datetime.strptime(d, "%Y-%m-%d")
+            return f"{dt.year-1:04d}-{dt.month:02d}-{dt.day:02d}"
+
+        out = []
+        for d in all_dates:
+            row = inc_by_date.get(d) or {}
+            bs = bs_by_date.get(d) or {}
+            rev = _av_float(row.get("totalRevenue"))
+            ni = _av_float(row.get("netIncome"))
+            gp = _av_float(row.get("grossProfit"))
+            ta = _av_float(bs.get("totalAssets"))
+            tl = _av_float(bs.get("totalLiabilities"))
+            te = _av_float(bs.get("totalShareholderEquity"))
+            shares = _av_float(bs.get("commonStockSharesOutstanding"), 1)
+            ca = _av_float(bs.get("totalCurrentAssets"))
+            cl = _av_float(bs.get("totalCurrentLiabilities"), 1)
+
+            if rtype == "quarterly":
+                prev_d = _prev_date(d)
+                prev_row = inc_by_date.get(prev_d)
+            else:
+                idx = all_dates.index(d) + 1
+                prev_row = inc_by_date.get(all_dates[idx]) if idx < len(all_dates) else None
+
+            prev_rev = _av_float(prev_row.get("totalRevenue")) if prev_row else 0
+            prev_ni = _av_float(prev_row.get("netIncome")) if prev_row else 0
+
+            out.append({
+                "报告期": d if rtype == "quarterly" else d[:7],
+                "营业总收入": round(rev / 1e8, 2),
+                "营业总收入同比增长率": round((rev - prev_rev) / prev_rev * 100, 2) if prev_rev else None,
+                "净利润": round(ni / 1e8, 2),
+                "净利润同比增长率": round((ni - prev_ni) / prev_ni * 100, 2) if prev_ni else None,
+                "销售毛利率": round(gp / rev * 100, 2) if rev else None,
+                "销售净利率": round(ni / rev * 100, 2) if rev else None,
+                "净资产收益率": round(ni / te * 100, 2) if te else None,
+                "基本每股收益": row.get("reportedEPS"),
+                "每股净资产": round(te / shares, 4) if shares else None,
+                "资产负债率": round(tl / ta * 100, 2) if ta else None,
+                "流动比率": round(ca / cl, 2) if cl else None,
+                "_report_type": rtype,
+                "_currency": "USD",
+            })
+        return out
+
+    try:
+        fin = get_us_stock_financial_report(code)
+
+        bs_annual = (fin.get("balance_sheet") or {}).get("annualReports") or []
+        inc_annual = (fin.get("income_statement") or {}).get("annualReports") or []
+
+        bs_quarterly = (fin.get("balance_sheet") or {}).get("quarterlyReports") or []
+        inc_quarterly = (fin.get("income_statement") or {}).get("quarterlyReports") or []
+
+        records = _to_records(inc_annual, bs_annual, "annual") + \
+                  _to_records(inc_quarterly, bs_quarterly, "quarterly")
+
+        # 反转：A股records是旧→新，保持一致
+        records.reverse()
+
+        return {"records": records} if records else None
+    except Exception:
+        return None
 
 
 # ============================================================
@@ -343,8 +446,8 @@ def _get_dupont_analysis(code: str) -> dict | None:
         equity_multiplier = round(1 / (1 - debt_ratio_pct / 100), 4) if debt_ratio_pct else None
 
         # 计算总资产 = 股东权益 / (1 - 资产负债率)
-        # 股东权益 = 净利润 / ROE
-        if roe_pct and roe_pct > 0:
+        # 股东权益 = 净利润 / ROE（负ROE+负净利也能算出正权益）
+        if roe_pct and abs(roe_pct) < 200:
             equity = net_profit / (roe_pct / 100)  # 亿
             total_assets = equity / (1 - debt_ratio_pct / 100) if debt_ratio_pct < 100 else None  # 亿
         else:
@@ -1177,6 +1280,137 @@ def _extract_stages(text: str, companies: list[dict]) -> list[dict]:
 @router.get("/{code}")
 def fundamental_analysis(code: str):
     """基本面综合：财务摘要 + 收入构成 + 行业前瞻"""
+    # 美股检测 → 自动路由到 Alpha Vantage
+    _market = _get_stock_market(code)
+    if _market in ("us_stock", "crypto", "hk_stock"):
+        from backend.services.external.alpha_vantage import (
+            get_us_stock_price,
+            get_us_stock_financial_report,
+        )
+        try:
+            price = get_us_stock_price(code)
+            fin = get_us_stock_financial_report(code)
+
+            def _av2records(bs_list, inc_list, cf_list, rtype: str):
+                """转换 AV 原始财报为 financial_summary.records 格式"""
+                def _av_float(v, default=0):
+                    """安全转float，处理 'None' 字符串"""
+                    if v is None or v == 'None' or v == '':
+                        return default
+                    try:
+                        return float(v)
+                    except (ValueError, TypeError):
+                        return default
+
+                bs_by_date = {r["fiscalDateEnding"]: r for r in bs_list}
+                inc_by_date = {r["fiscalDateEnding"]: r for r in inc_list}
+                cf_by_date = {r["fiscalDateEnding"]: r for r in cf_list}
+                all_dates = sorted(set(list(bs_by_date.keys()) + list(inc_by_date.keys())), reverse=True)
+
+                # 按日期偏移12个月找同比基准（季度比去年同季，年度比去年）
+                from datetime import datetime, timedelta
+                def _prev_date(d: str) -> str | None:
+                    dt = datetime.strptime(d, "%Y-%m-%d")
+                    prev_ym = dt.year - 1, dt.month, dt.day
+                    # 格式化成 YYYY-MM-DD
+                    return f"{prev_ym[0]:04d}-{prev_ym[1]:02d}-{prev_ym[2]:02d}"
+
+                out = []
+                for d in all_dates:
+                    row = inc_by_date.get(d) or {}
+                    bs = bs_by_date.get(d) or {}
+                    cf = cf_by_date.get(d) or {}
+                    rev = _av_float(row.get("totalRevenue"))
+                    ni = _av_float(row.get("netIncome"))
+                    gp = _av_float(row.get("grossProfit"))
+                    ta = _av_float(bs.get("totalAssets"))
+                    tl = _av_float(bs.get("totalLiabilities"))
+                    te = _av_float(bs.get("totalShareholderEquity"))
+                    shares = _av_float(bs.get("commonStockSharesOutstanding"), 1)
+                    ca = _av_float(bs.get("totalCurrentAssets"))
+                    cl = _av_float(bs.get("totalCurrentLiabilities"), 1)
+
+                    # 同比：季度比去年同季，年度比去年
+                    if rtype == "quarterly":
+                        prev_d = _prev_date(d)
+                        prev_row = inc_by_date.get(prev_d)
+                    else:
+                        # 年度：取列表中的下一项（上一年）
+                        idx = all_dates.index(d) + 1
+                        prev_row = inc_by_date.get(all_dates[idx]) if idx < len(all_dates) else None
+
+                    prev_rev = _av_float(prev_row.get("totalRevenue")) if prev_row else 0
+                    prev_ni = _av_float(prev_row.get("netIncome")) if prev_row else 0
+
+                    out.append({
+                        "报告期": d if rtype == "quarterly" else d[:7],
+                        "营业总收入": round(rev / 1e8, 2),
+                        "营业总收入同比增长率": round((rev - prev_rev) / prev_rev * 100, 2) if prev_rev else None,
+                        "净利润": round(ni / 1e8, 2),
+                        "净利润同比增长率": round((ni - prev_ni) / prev_ni * 100, 2) if prev_ni else None,
+                        "销售毛利率": round(gp / rev * 100, 2) if rev else None,
+                        "销售净利率": round(ni / rev * 100, 2) if rev else None,
+                        "净资产收益率": round(ni / te * 100, 2) if te else None,
+                        "基本每股收益": row.get("reportedEPS"),
+                        "每股净资产": round(te / shares, 4) if shares else None,
+                        "资产负债率": round(tl / ta * 100, 2) if ta else None,
+                        "流动比率": round(ca / cl, 2) if cl else None,
+                        "_report_type": rtype,
+                        "_currency": "USD",
+                    })
+                return out
+
+            # 年度数据
+            bs_annual = (fin.get("balance_sheet") or {}).get("annualReports") or []
+            inc_annual = (fin.get("income_statement") or {}).get("annualReports") or []
+            cf_annual = (fin.get("cashflow") or {}).get("annualReports") or []
+            records_annual = _av2records(bs_annual, inc_annual, cf_annual, "annual")
+
+            # 季度数据
+            bs_quarterly = (fin.get("balance_sheet") or {}).get("quarterlyReports") or []
+            inc_quarterly = (fin.get("income_statement") or {}).get("quarterlyReports") or []
+            cf_quarterly = (fin.get("cashflow") or {}).get("quarterlyReports") or []
+            records_quarterly = _av2records(bs_quarterly, inc_quarterly, cf_quarterly, "quarterly")
+
+            # 合并：先年度（20条）后季度（80条），前端可切换显示
+            records = records_annual + records_quarterly
+
+            # 取最新一条做概览
+            l_inc = inc_annual[0] if inc_annual else inc_quarterly[0] if inc_quarterly else {}
+
+            l_bs = bs_annual[0] if bs_annual else bs_quarterly[0] if bs_quarterly else {}
+            l_cf = cf_annual[0] if cf_annual else cf_quarterly[0] if cf_quarterly else {}
+
+            return {
+                "code": code,
+                "name": code,
+                "sector": "美股",
+                "market": "us",
+                "price": price.get("price"),
+                "financial_summary": {"records": records},
+                "revenue_breakdown": [],
+                "industry_outlook": None,
+                "revenue": l_inc.get("totalRevenue"),
+                "net_profit": l_inc.get("netIncome"),
+                "gross_profit": l_inc.get("grossProfit"),
+                "eps": l_inc.get("reportedEPS"),
+                "total_assets": l_bs.get("totalAssets"),
+                "total_liabilities": l_bs.get("totalLiabilities"),
+                "total_equity": l_bs.get("totalShareholderEquity"),
+                "operating_cf": l_cf.get("operatingCashflow"),
+                "free_cf": l_cf.get("freeCashFlow"),
+                "balance_sheet": bs_annual,
+                "income_statement": inc_annual,
+                "cashflow": cf_annual,
+                "balance_sheet_quarterly": bs_quarterly,
+                "income_statement_quarterly": inc_quarterly,
+                "cashflow_quarterly": cf_quarterly,
+                "_source": "alpha_vantage",
+                "_currency": "USD",
+            }
+        except Exception as e:
+            raise HTTPException(502, f"获取美股数据失败: {e}")
+
     import time, threading
     
     _start = time.time()
@@ -2163,10 +2397,103 @@ def _get_contradiction_analysis(code: str) -> dict | None:
 
 @router.get("/{code}/contradiction")
 def contradiction_api(code: str):
-    """矛盾分析 API"""
-    result = _get_contradiction_analysis(code)
-    if not result:
-        raise HTTPException(status_code=404, detail="数据不足，无法分析")
+    """矛盾分析 API（V2动态引擎）"""
+
+    _market = _get_stock_market(code)
+    is_us = _market in ("us_stock", "crypto", "hk_stock")
+
+    from backend.services.analyze.contradiction_v2 import ContradictionEngine
+
+    # ── 收集数据源 ──
+    # 1. 财务摘要 records
+    fin = _get_financial_summary(code)
+    fin_records = (fin or {}).get("records", [])
+    lat = fin_records[-1] if fin_records else {}
+
+    # 2. indicators（A股有akshear详细指标，美股从records构建）
+    indicators = {}
+    if is_us:
+        indicators = ContradictionEngine._build_lat_from_record(lat)
+    else:
+        try:
+            records_ind = get_financial_indicators(code, "2023")
+            indicators = records_ind[0] if records_ind else {}
+        except Exception:
+            indicators = {}
+
+    # 3. 行情数据
+    cur_price = chg_pct = pe = pb = mcap = chg3d = None
+    sector_name = "美股" if is_us else None
+
+    if is_us:
+        # 美股：从AV价格 + K线拿
+        from backend.services.external.alpha_vantage import get_us_stock_price
+        from backend.services.database.stock_db import get_kline_records
+        try:
+            price_data = get_us_stock_price(code)
+            cur_price = price_data.get("price")
+        except Exception:
+            pass
+        try:
+            klines = get_kline_records(code, 5)
+            if len(klines) >= 2:
+                chg_pct = round((klines[0]["close"] - klines[1]["close"]) / klines[1]["close"] * 100, 2)
+            if len(klines) >= 4:
+                chg3d = round((klines[0]["close"] - klines[3]["close"]) / klines[3]["close"] * 100, 2)
+        except Exception:
+            pass
+    else:
+        # A股：从CSV行情拿
+        try:
+            csv_path = _find_latest_csv()
+            if csv_path:
+                _df = pd.read_csv(csv_path, encoding="utf-16", sep="\t", engine="python")
+                if "代码" in _df.columns:
+                    _df["代码"] = _df["代码"].astype(str).str.strip("'\"")
+                if not _df[_df["代码"] == code].empty:
+                    row = _df[_df["代码"] == code].iloc[0]
+                    cur_price = _flt(row.get("最新"))
+                    chg_pct = _flt(row.get("涨幅"))
+                    pe = _flt(row.get("市盈率"))
+                    pb = _flt(row.get("市净率"))
+                    mcap = _flt(row.get("总市值"))
+                    chg3d = _flt(row.get("3日涨幅"))
+        except Exception:
+            pass
+        # 行业
+        detail = get_stock_detail_from_csv(code)
+        if detail:
+            sector_name = detail.get("industry", "")
+
+    # 4. 板块数据（A股用CSV，美股跳过）
+    industry_avg_chg = industry_up_ratio = industry_rank = industry_total = None
+    if not is_us and sector_name:
+        try:
+            ind = _get_industry_data(sector_name)
+            if ind:
+                industry_avg_chg = ind.get("avg_change")
+                industry_up_ratio = ind.get("up_ratio")
+                industry_rank = ind.get("rank")
+                industry_total = ind.get("total_sectors")
+        except Exception:
+            pass
+
+    # ── 运行引擎 ──
+    engine = ContradictionEngine(
+        code=code,
+        name=code if is_us else None,
+        fin_records=fin_records,
+        indicators=indicators,
+        cur_price=cur_price, chg_pct=chg_pct,
+        pe=pe, pb=pb, mcap=mcap, chg3d=chg3d,
+        industry_avg_chg=industry_avg_chg,
+        industry_up_ratio=industry_up_ratio,
+        industry_rank=industry_rank,
+        industry_total=industry_total,
+        sector_name=sector_name,
+    )
+    result = engine.analyze()
+    result["_currency"] = "USD" if is_us else "CNY"
     return result
 
 
@@ -2788,6 +3115,168 @@ def _compute_health_score(code: str) -> dict | None:
 def financial_statements(code: str):
     """三张财务报表（资产负债表、现金流量表、利润表）+ 健康评分"""
     from backend.routers.analysis import _get_stock_list
+
+    # ── 美股分支 ──
+    _market = _get_stock_market(code)
+    if _market in ("us_stock", "crypto", "hk_stock"):
+        from backend.services.external.alpha_vantage import (
+            get_us_stock_financial_report,
+        )
+
+        # AV→中文标签映射（资产负债表）
+        _AV_BS = {
+            "totalAssets": "资产总计",
+            "totalCurrentAssets": "流动资产合计",
+            "cashAndCashEquivalentsAtCarryingValue": "货币资金",
+            "cashAndShortTermInvestments": "现金及短投",
+            "inventory": "存货",
+            "currentNetReceivables": "应收账款",
+            "totalNonCurrentAssets": "非流动资产合计",
+            "propertyPlantEquipment": "固定资产",
+            "accumulatedDepreciationAmortizationPPE": "累计折旧",
+            "intangibleAssets": "无形资产",
+            "intangibleAssetsExcludingGoodwill": "无形资产(除商誉)",
+            "goodwill": "商誉",
+            "investments": "投资合计",
+            "longTermInvestments": "长期投资",
+            "shortTermInvestments": "短期投资",
+            "otherCurrentAssets": "其他流动资产",
+            "otherNonCurrentAssets": "其他非流动资产",
+            "totalLiabilities": "负债合计",
+            "totalCurrentLiabilities": "流动负债合计",
+            "currentAccountsPayable": "应付账款",
+            "deferredRevenue": "递延收入",
+            "currentDebt": "短期借款",
+            "shortTermDebt": "短期借款",
+            "longTermDebt": "长期借款",
+            "longTermDebtNoncurrent": "长期借款",
+            "shortLongTermDebtTotal": "借款合计",
+            "capitalLeaseObligations": "租赁负债",
+            "currentLongTermDebt": "一年内到期长期借款",
+            "otherCurrentLiabilities": "其他流动负债",
+            "otherNonCurrentLiabilities": "其他非流动负债",
+            "totalShareholderEquity": "股东权益合计",
+            "treasuryStock": "库存股",
+            "retainedEarnings": "留存收益",
+            "commonStock": "普通股股本",
+            "commonStockSharesOutstanding": "流通股数(股)",
+        }
+        # AV→中文标签映射（利润表）
+        _AV_PL = {
+            "totalRevenue": "营业总收入",
+            "costOfRevenue": "营业成本",
+            "grossProfit": "毛利",
+            "operatingIncome": "营业利润",
+            "sellingGeneralAndAdministrative": "销售管理费用",
+            "researchAndDevelopment": "研发费用",
+            "operatingExpenses": "营业费用合计",
+            "investmentIncomeNet": "投资收益",
+            "netInterestIncome": "净利息收入",
+            "interestIncome": "利息收入",
+            "interestExpense": "利息支出",
+            "otherNonOperatingIncome": "其他营业外收入",
+            "nonInterestIncome": "非利息收入",
+            "incomeBeforeTax": "税前利润",
+            "incomeTaxExpense": "所得税",
+            "netIncomeFromContinuingOperations": "持续经营净利润",
+            "netIncome": "净利润",
+            "comprehensiveIncomeNetOfTax": "综合收益",
+            "ebit": "息税前利润(EBIT)",
+            "ebitda": "息税折旧摊销前利润(EBITDA)",
+            "depreciation": "折旧",
+            "depreciationAndAmortization": "折旧摊销",
+            "reportedEPS": "基本每股收益",
+            "costofGoodsAndServicesSold": "商品服务成本",
+            "interestAndDebtExpense": "利息债务费用",
+        }
+        # AV→中文标签映射（现金流量表）
+        _AV_CF = {
+            "operatingCashflow": "经营活动现金流净额",
+            "capitalExpenditures": "资本开支",
+            "cashflowFromInvestment": "投资活动现金流净额",
+            "cashflowFromFinancing": "筹资活动现金流净额",
+            "dividendPayout": "股利分配",
+            "dividendPayoutCommonStock": "普通股股利分配",
+            "dividendPayoutPreferredStock": "优先股股利分配",
+            "stockBasedCompensation": "股权激励",
+            "netIncome": "净利润",
+            "depreciationDepletionAndAmortization": "折旧摊销",
+            "changeInReceivables": "应收变动",
+            "changeInInventory": "存货变动",
+            "changeInOperatingLiabilities": "经营负债变动",
+            "changeInOperatingAssets": "经营资产变动",
+            "changeInCashAndCashEquivalents": "现金净增加额",
+            "paymentsForOperatingActivities": "经营活动现金流出",
+            "proceedsFromOperatingActivities": "经营活动现金流入",
+            "paymentsForRepurchaseOfCommonStock": "股票回购",
+            "paymentsForRepurchaseOfEquity": "权益回购",
+            "paymentsForRepurchaseOfPreferredStock": "优先股回购",
+            "proceedsFromIssuanceOfCommonStock": "普通股发行",
+            "proceedsFromIssuanceOfPreferredStock": "优先股发行",
+            "proceedsFromIssuanceOfLongTermDebtAndCapitalSecuritiesNet": "长期借款发行",
+            "proceedsFromRepaymentsOfShortTermDebt": "短借偿还",
+            "proceedsFromRepurchaseOfEquity": "权益回购",
+            "proceedsFromSaleOfTreasuryStock": "库存股出售",
+            "profitLoss": "盈亏",
+            "changeInExchangeRate": "汇率变动影响",
+        }
+
+        def _av_float(v, default=0):
+            if v is None or v == 'None' or v == '':
+                return default
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return default
+
+        def _av_to_china_rows(raw_list: list[dict], field_map: dict) -> list[dict]:
+            """AV原始数据 → {period, items} 格式，字段名转中文，数值转亿单位"""
+            if not raw_list:
+                return []
+            out = []
+            for r in raw_list:
+                items = {}
+                for av_key, ch_label in field_map.items():
+                    val = r.get(av_key)
+                    if val is not None and val != 'None' and val != '':
+                        # 数值字段 ÷1e8 统一成亿单位
+                        try:
+                            num = float(val)
+                            items[ch_label] = round(num / 1e8, 4)
+                        except (ValueError, TypeError):
+                            items[ch_label] = val  # 非数值保留原值
+                out.append({
+                    "period": r.get("fiscalDateEnding", ""),
+                    "items": items,
+                })
+            return out
+
+        try:
+            fin = get_us_stock_financial_report(code)
+
+            bs_annual = (fin.get("balance_sheet") or {}).get("annualReports") or []
+            inc_annual = (fin.get("income_statement") or {}).get("annualReports") or []
+            cf_annual = (fin.get("cashflow") or {}).get("annualReports") or []
+
+            bs_quarterly = (fin.get("balance_sheet") or {}).get("quarterlyReports") or []
+            inc_quarterly = (fin.get("income_statement") or {}).get("quarterlyReports") or []
+            cf_quarterly = (fin.get("cashflow") or {}).get("quarterlyReports") or []
+
+            return {
+                "code": code,
+                "name": code,
+                "balance_sheet": _av_to_china_rows(bs_annual, _AV_BS),
+                "profit_sheet": _av_to_china_rows(inc_annual, _AV_PL),
+                "cash_flow": _av_to_china_rows(cf_annual, _AV_CF),
+                "balance_sheet_quarterly": _av_to_china_rows(bs_quarterly, _AV_BS),
+                "profit_sheet_quarterly": _av_to_china_rows(inc_quarterly, _AV_PL),
+                "cash_flow_quarterly": _av_to_china_rows(cf_quarterly, _AV_CF),
+                "health_score": None,
+                "_currency": "USD",
+            }
+        except Exception as e:
+            raise HTTPException(502, f"获取美股财报失败: {e}")
+
     stock_map = _get_stock_list()
     name = stock_map.get(code, "")
 
@@ -2851,6 +3340,91 @@ def _get_all_stocks_in_industry(industry: str) -> list[str]:
 @router.get("/comprehensive/{code}")
 def comprehensive_analysis(code: str):
     """综合基本面分析：6大维度 + 同行对比 + 管理层分析"""
+
+    # ── 美股分支 ──
+    _market = _get_stock_market(code)
+    if _market in ("us_stock", "crypto", "hk_stock"):
+        from backend.routers.analysis import _get_stock_list
+        stock_map = _get_stock_list()
+        name = stock_map.get(code, code)
+        fin = _get_financial_summary(code)
+        records = (fin or {}).get("records", [])
+        lat = records[-1] if records else {}
+
+        def _v(key):
+            v = lat.get(key)
+            return round(float(v), 2) if v is not None else None
+
+        dimensions = []
+
+        # 成长能力
+        growth_items = []
+        rev_g = _v("营业总收入同比增长率")
+        ni_g = _v("净利润同比增长率")
+        g_score = 0
+        if rev_g is not None:
+            pts = min(7, max(0, (rev_g + 10) / 30 * 7)) if rev_g > -10 else 0
+            g_score += pts
+            growth_items.append({"label": "营收增长率", "value": f"{rev_g:+.2f}%", "score": round(pts, 1), "max": 7, "verdict": "高增长" if rev_g > 20 else ("正增长" if rev_g > 0 else "下滑")})
+        if ni_g is not None:
+            pts = min(7, max(0, (ni_g + 15) / 35 * 7)) if ni_g > -15 else 0
+            g_score += pts
+            growth_items.append({"label": "净利润增长率", "value": f"{ni_g:+.2f}%", "score": round(pts, 1), "max": 7, "verdict": "爆发" if ni_g > 30 else ("增长" if ni_g > 0 else "下滑")})
+        dimensions.append({"key": "growth", "name": "成长能力", "icon": "📈", "score": round(g_score, 1), "max": 20, "items": growth_items})
+
+        # 盈利能力
+        profit_items = []
+        gm = _v("销售毛利率")
+        nm = _v("销售净利率")
+        roe = _v("净资产收益率")
+        p_score = 0
+        if gm is not None:
+            pts = min(8, gm / 50 * 8)
+            p_score += pts
+            profit_items.append({"label": "毛利率", "value": f"{gm:.2f}%", "score": round(pts, 1), "max": 8, "verdict": "极高" if gm > 50 else ("高" if gm > 25 else ("中" if gm > 10 else "低"))})
+        if nm is not None:
+            pts = min(9, max(0, nm / 15 * 9))
+            p_score += pts
+            profit_items.append({"label": "净利率", "value": f"{nm:.2f}%", "score": round(pts, 1), "max": 9, "verdict": "极高" if nm > 20 else ("优秀" if nm > 10 else ("良好" if nm > 5 else "偏低"))})
+        if roe is not None:
+            pts = min(8, max(0, roe / 20 * 8))
+            p_score += pts
+            profit_items.append({"label": "ROE", "value": f"{roe:.2f}%", "score": round(pts, 1), "max": 8, "verdict": "极强" if roe > 20 else ("优秀" if roe > 15 else ("良好" if roe > 10 else "一般"))})
+        dimensions.append({"key": "profitability", "name": "盈利能力", "icon": "💰", "score": round(p_score, 1), "max": 25, "items": profit_items})
+
+        # 偿债能力
+        solvency_items = []
+        dr = _v("资产负债率")
+        cr = _v("流动比率")
+        s_score = 0
+        if dr is not None:
+            pts = min(10, max(0, (80 - dr) / 80 * 10))
+            s_score += pts
+            solvency_items.append({"label": "资产负债率", "value": f"{dr:.2f}%", "score": round(pts, 1), "max": 10, "verdict": "低风险" if dr < 40 else ("适中" if dr < 60 else ("偏高" if dr < 80 else "高风险"))})
+        if cr is not None:
+            pts = min(10, min(cr / 3 * 10, 10))
+            s_score += pts
+            solvency_items.append({"label": "流动比率", "value": f"{cr:.2f}", "score": round(pts, 1), "max": 10, "verdict": "优秀" if cr > 2 else ("良好" if cr > 1.5 else ("一般" if cr > 1 else "偏低"))})
+        dimensions.append({"key": "solvency", "name": "偿债能力", "icon": "🏛️", "score": round(s_score, 1), "max": 20, "items": solvency_items})
+
+        total_s = sum(d["score"] for d in dimensions)
+        total_m = sum(d["max"] for d in dimensions)
+
+        return {
+            "code": code,
+            "name": name,
+            "indicators": {"raw": records, "latest": records[-1] if records else {}},
+            "dimensions": dimensions,
+            "total_score": round(total_s, 1),
+            "total_max": total_m,
+            "total_pct": round(total_s / total_m * 100, 1) if total_m > 0 else 0,
+            "management": {"changes": [], "buy_total": 0, "sell_total": 0, "net_action": "无数据", "top_holders": [], "total_holders": None},
+            "industry": "美股",
+            "peer_comparison": {},
+            "raw_report": {},
+            "_currency": "USD",
+        }
+
     from backend.routers.analysis import _get_stock_list
 
     stock_map = _get_stock_list()
@@ -3359,3 +3933,72 @@ def comprehensive_analysis(code: str):
         return obj
 
     return _clean(result)
+
+
+# ═══════════════════════════════════════════════════════════
+# 美股基本面（Alpha Vantage）
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/us/{symbol}")
+def us_fundamental_analysis(symbol: str):
+    """美股基本面：实时价格 + 三张财报（Alpha Vantage），SQLite缓存"""
+    from backend.services.external.alpha_vantage import (
+        get_us_stock_price,
+        get_us_stock_financial_report,
+    )
+
+    import threading, time
+
+    result_box = {}
+
+    def _do_work():
+        try:
+            price = get_us_stock_price(symbol)
+            fin = get_us_stock_financial_report(symbol)
+
+            # 解析财务报表摘要
+            bs_annual = (fin.get("balance_sheet") or {}).get("annualReports") or []
+            inc_annual = (fin.get("income_statement") or {}).get("annualReports") or []
+            cf_annual = (fin.get("cashflow") or {}).get("annualReports") or []
+
+            bs_quarterly = (fin.get("balance_sheet") or {}).get("quarterlyReports") or []
+            inc_quarterly = (fin.get("income_statement") or {}).get("quarterlyReports") or []
+            cf_quarterly = (fin.get("cashflow") or {}).get("quarterlyReports") or []
+
+            latest_bs = bs_annual[0] if bs_annual else bs_quarterly[0] if bs_quarterly else {}
+            latest_inc = inc_annual[0] if inc_annual else inc_quarterly[0] if inc_quarterly else {}
+            latest_cf = cf_annual[0] if cf_annual else cf_quarterly[0] if cf_quarterly else {}
+
+            result_box["result"] = {
+                "symbol": symbol,
+                "price": price.get("price"),
+                "market": "us",
+                "revenue": latest_inc.get("totalRevenue"),
+                "net_profit": latest_inc.get("netIncome"),
+                "gross_profit": latest_inc.get("grossProfit"),
+                "eps": latest_inc.get("reportedEPS"),
+                "total_assets": latest_bs.get("totalAssets"),
+                "total_liabilities": latest_bs.get("totalLiabilities"),
+                "total_equity": latest_bs.get("totalShareholderEquity"),
+                "cash": latest_bs.get("cashAndCashEquivalentsAtCarryingValue"),
+                "operating_cf": latest_cf.get("operatingCashflow"),
+                "free_cf": latest_cf.get("freeCashFlow"),
+                "balance_sheet": bs_annual,
+                "income_statement": inc_annual,
+                "cashflow": cf_annual,
+                "balance_sheet_quarterly": bs_quarterly,
+                "income_statement_quarterly": inc_quarterly,
+                "cashflow_quarterly": cf_quarterly,
+            }
+        except Exception as e:
+            result_box["error"] = str(e)
+
+    t = threading.Thread(target=_do_work, daemon=True)
+    t.start()
+    t.join(timeout=30)
+
+    if result_box.get("result"):
+        return result_box["result"]
+    if result_box.get("error"):
+        raise HTTPException(502, result_box["error"])
+    return {"symbol": symbol, "error": "超时", "_timeout": True}

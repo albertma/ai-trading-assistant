@@ -29,7 +29,7 @@ from backend.services.database.stock_db import (
 
     # 财务报告
     save_financial_reports, get_financial_reports, get_latest_financial_report,
-    get_financial_cache,
+    get_financial_cache, save_financial_cache,
 
     # 风控规则
     get_risk_rules, add_risk_rule, update_risk_rule,

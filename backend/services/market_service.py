@@ -38,12 +38,28 @@ def get_market_overview() -> dict:
 # ═══════════════════════════════════════════════════════════
 
 def _detect_market(code: str) -> str:
-    """判断股票所属市场"""
+    """判断股票所属市场：优先查 stock_info.market"""
+    import sqlite3
+    from pathlib import Path
+    try:
+        db = Path.home() / "Jarvis" / "ai_trading" / "stock_archive.db"
+        conn = sqlite3.connect(str(db))
+        row = conn.execute("SELECT market FROM stock_info WHERE code = ?", (code.strip(),)).fetchone()
+        conn.close()
+        if row and row[0]:
+            m = row[0]
+            # 统一返回值：a_stock / hk_stock / us_stock / crypto / unknown
+            if m in ("沪市", "科创板", "深市", "创业板", "北证"):
+                return "a_stock"
+            if m in ("hk_stock", "us_stock"):
+                return m
+    except Exception:
+        pass
     code = code.strip()
     if code.endswith((".us", ".US")):
-        return "us"
+        return "us_stock"
     if code.endswith((".hk", ".HK")):
-        return "hk"
+        return "hk_stock"
     if code.isdigit():
         return "a_stock"
     if code.startswith(("6", "0", "3", "2", "4", "8")):
@@ -92,90 +108,23 @@ def get_prices_batch(codes: list[str]) -> dict[str, float]:
 # ═══════════════════════════════════════════════════════════
 
 def get_daily_history(code: str, max_days: int = 250) -> pd.DataFrame | None:
-    """获取个股日线行情（SQLite → 腾讯API → akshare）"""
-    import urllib.request, json
-    import sqlite3
-    from pathlib import Path
+    """获取个股日线行情（统一走 ensure_kline，A股/美股同路径）"""
+    from backend.services.db_client import ensure_kline
 
-    DB = str(Path.home() / "Jarvis/ai_trading/stock_archive.db")
+    ok, records = ensure_kline(code)
+    if not ok or not records:
+        return None
 
-    # 方法0: SQLite kline_daily（最快，无网络）
-    try:
-        conn = sqlite3.connect(DB)
-        df = pd.read_sql_query(
-            "SELECT date, open, close, high, low, volume FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT ?",
-            conn, params=(code, max_days))
-        conn.close()
-        if not df.empty:
-            df = df.sort_values("date").reset_index(drop=True)
-            df["date"] = pd.to_datetime(df["date"])
-            df["pct_change"] = df["close"].pct_change() * 100
-            df["amount"] = df["volume"] * 100 * (df["high"] + df["low"] + df["close"]) / 3
-            return df
-    except Exception:
-        pass
+    # 按日期正序，取最近 max_days
+    records.sort(key=lambda r: r["date"])
+    records = records[-max_days:]
 
-    market = "sh" if code.startswith("6") else "sz" if code.startswith(("0", "3")) else "bj"
-
-    # 方法1: 腾讯K线API（快、稳）
-    try:
-        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={market}{code},day,,,{min(max_days, 800)},qfq"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        resp = urllib.request.urlopen(req, timeout=8)
-        raw = json.loads(resp.read().decode())
-        kdata = raw["data"][f"{market}{code}"].get("qfqday") or raw["data"][f"{market}{code}"].get("day") or []
-
-        records = []
-        for k in kdata:
-            records.append({
-                "date": k[0], "open": float(k[1]), "close": float(k[2]),
-                "high": float(k[3]), "low": float(k[4]), "volume": float(k[5]),
-            })
-        df = pd.DataFrame(records)
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.sort_values("date").reset_index(drop=True)
-        df["pct_change"] = df["close"].pct_change() * 100
-        df["amount"] = df["volume"] * 100 * (df["high"] + df["low"] + df["close"]) / 3
-        return df
-    except Exception:
-        pass
-
-    # 方法2: akshare（兜底，带15s超时）
-    try:
-        import akshare as ak
-        import threading
-        _result = [None]
-        _exc = [None]
-        def _fetch():
-            try:
-                _result[0] = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
-            except Exception as e:
-                _exc[0] = e
-        t = threading.Thread(target=_fetch, daemon=True)
-        t.start()
-        t.join(timeout=15)
-        if t.is_alive() or _exc[0] is not None:
-            raise Exception("akshare timeout or error")
-        df = _result[0]
-        if df is not None and not df.empty:
-            df.columns = [c.strip() for c in df.columns]
-            df.rename(columns={
-                "日期": "date", "开盘": "open", "收盘": "close",
-                "最高": "high", "最低": "low", "成交量": "volume",
-                "成交额": "amount", "振幅": "amplitude",
-                "涨跌幅": "pct_change", "涨跌额": "change",
-                "换手率": "turnover",
-            }, inplace=True)
-            df["date"] = pd.to_datetime(df["date"])
-            df = df.sort_values("date").reset_index(drop=True)
-            for col in ["open", "close", "high", "low", "volume", "amount", "amplitude", "pct_change", "turnover"]:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-            return df
-    except Exception:
-        pass
-
-    return None
+    df = pd.DataFrame(records)
+    df["date"] = pd.to_datetime(df["date"])
+    df["pct_change"] = df["close"].pct_change() * 100
+    # 美股 volume 是实际股数（不*100），A 股在 stock_db 入库时已统一
+    df["amount"] = df["volume"] * (df["high"] + df["low"] + df["close"]) / 3
+    return df
 
 
 def get_ma(df: pd.DataFrame, period: int) -> float | None:

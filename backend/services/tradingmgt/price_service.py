@@ -2,6 +2,9 @@
 
 from datetime import date, timedelta
 
+import sqlite3
+from pathlib import Path
+
 from backend.config import MARKET_DATA_DIR
 from backend.services.external.akshare_client import (
     get_hk_stock_daily_price,
@@ -11,12 +14,38 @@ from backend.services.external.akshare_client import (
 )
 from .constants import CRYPTO_SYMBOLS
 
+_STOCK_DB = Path.home() / "Jarvis" / "ai_trading" / "stock_archive.db"
+
+
+def _get_market_from_db(code: str) -> str | None:
+    """优先从 stock_info.market 查询市场"""
+    try:
+        conn = sqlite3.connect(str(_STOCK_DB))
+        row = conn.execute(
+            "SELECT market FROM stock_info WHERE code = ?", (code.strip(),)
+        ).fetchone()
+        conn.close()
+        if row and row[0]:
+            return row[0]
+    except Exception:
+        pass
+    return None
+
 
 def detect_market(code: str) -> str:
-    """根据代码判断所属市场"""
+    """判断股票所属市场：优先查 stock_info.market，代码格式兜底"""
     c = code.strip().upper()
+
+    # ① 优先从 SQLite stock_info 表查
+    db_market = _get_market_from_db(code)
+    if db_market:
+        return db_market
+
+    # ② 已知名单
     if c in CRYPTO_SYMBOLS:
         return "crypto"
+
+    # ③ 代码格式推断
     if c.isdigit():
         if len(c) == 6:
             return "a_stock"
