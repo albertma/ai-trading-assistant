@@ -9,24 +9,42 @@
                 </template>
 
                 <template v-else>
-                    <!-- ①-a 备注 -->
+                    <!-- ①-a 多备注时间线 -->
                     <el-card shadow="hover" style="margin-bottom:12px;" :style="{ borderLeft: '4px solid #409eff' }">
                         <template #header>
                             <div style="display:flex;justify-content:space-between;align-items:center;">
-                                <b>📝 备注 ({{ selected.name }})</b>
-                                <el-button v-if="!editingNotes" size="small" type="primary" plain @click="startEditNotes">编辑</el-button>
-                                <span v-else>
-                                    <el-button size="small" @click="cancelEditNotes">取消</el-button>
-                                    <el-button size="small" type="primary" @click="saveNotes">保存</el-button>
-                                </span>
+                                <b>📝 备注 ({{ stockNotes.length }})</b>
+                                <el-button size="small" type="primary" plain @click="showAddNoteInput = !showAddNoteInput">
+                                    {{ showAddNoteInput ? '收起' : '+ 写备注' }}
+                                </el-button>
                             </div>
                         </template>
-                        <div v-if="!editingNotes">
-                            <div v-if="selected.notes" style="font-size:13px;color:#303133;line-height:1.6;white-space:pre-wrap;">{{ selected.notes }}</div>
-                            <div v-else style="color:#909399;font-size:12px;">暂无备注，点击「编辑」添加</div>
+                        <!-- 新增备注输入 -->
+                        <div v-if="showAddNoteInput" style="margin-bottom:12px;">
+                            <el-input v-model="newNoteText" type="textarea" :rows="2"
+                                placeholder="写一条观察笔记、交易计划、分析结论..." />
+                            <div style="margin-top:6px;display:flex;justify-content:flex-end;gap:6px;">
+                                <el-button size="small" @click="showAddNoteInput = false; newNoteText = ''">取消</el-button>
+                                <el-button size="small" type="primary" @click="handleAddNote" :disabled="!newNoteText.trim()">添加备注</el-button>
+                            </div>
                         </div>
-                        <el-input v-else v-model="notesText" type="textarea" :rows="3"
-                            placeholder="输入你的观察笔记、交易计划、分析结论..." />
+                        <!-- 备注列表 -->
+                        <div v-if="stockNotes.length" class="note-timeline">
+                            <div v-for="(note, i) in stockNotes" :key="note.id || i" class="note-item">
+                                <div class="note-dot"></div>
+                                <div class="note-body">
+                                    <div class="note-meta">
+                                        <span class="note-date">{{ note.created_at }}</span>
+                                        <el-button size="mini" type="danger" link
+                                            @click="handleDeleteNote(note)">删除</el-button>
+                                    </div>
+                                    <div class="note-text">{{ note.note }}</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div v-else style="color:#909399;font-size:13px;padding:8px 0;">
+                            暂无备注，点击「+ 写备注」添加第一条
+                        </div>
                     </el-card>
 
                     <!-- ①-b 操作栏（始终显示） -->
@@ -35,6 +53,9 @@
                         <el-tag v-if="profileData && profileData.risk_passed === true" type="success" size="small" effect="dark">✅ 通过</el-tag>
                         <el-tag v-else-if="profileData && profileData.risk_passed === false" type="danger" size="small" effect="dark">❌ 禁止买入</el-tag>
                         <el-tag v-else type="info" size="small" effect="dark">⏳ 待分析</el-tag>
+                        <el-tag v-if="selected.market" size="small" type="warning" effect="plain">
+                            {{ selected.market === 'us_stock' ? '🇺🇸 美股' : selected.market === 'hk_stock' ? '🇭🇰 港股' : '🇨🇳 A股' }}
+                        </el-tag>
                         <b style="font-size:14px;">{{ selected.name }} ({{ selected.code }})</b>
                         <span v-if="profileData?.price" style="color:#909399;font-size:12px;">
                             现价 {{ profileData.price?.toFixed(2) }}
@@ -44,15 +65,107 @@
                         </span>
                         <div style="flex:1"></div>
                         <el-button size="small" @click="goAnalysis">🔍 分析</el-button>
-                        <el-button size="small" @click="changePriority">
-                            {{ selected.priority === 'high' ? '降为中' : selected.priority === 'medium' ? '升为高' : '升为中' }}
-                        </el-button>
+                        <el-button size="small" type="success" @click="openBuyDialog">💰 买入</el-button>
+                        <el-popconfirm v-if="isInPositions" title="确定卖出？" @confirm="handleSell">
+                            <template #reference>
+                                <el-button size="small" type="danger">💸 卖出</el-button>
+                            </template>
+                        </el-popconfirm>
+                        <div style="display:flex;gap:4px;">
+                            <el-tag v-for="opt in [{v:'high',l:'高',t:'danger'},{v:'medium',l:'中',t:'warning'},{v:'low',l:'低',t:'info'}]" :key="opt.v"
+                                size="small"
+                                :type="selected.priority === opt.v ? opt.t : 'info'"
+                                :effect="selected.priority === opt.v ? 'dark' : 'plain'"
+                                style="cursor:pointer;"
+                                @click="setPriority(opt.v)">
+                                {{ opt.l }}
+                            </el-tag>
+                        </div>
                         <el-popconfirm title="确定移除？" @confirm="handleRemove(selected.code)">
                             <template #reference>
                                 <el-button size="small" type="danger">移除</el-button>
                             </template>
                         </el-popconfirm>
                     </div>
+
+                    <!-- ①-b' 提醒系统 -->
+                    <el-card shadow="hover" style="margin-bottom:12px;" :style="{ borderLeft: '4px solid #e6a23c' }">
+                        <template #header>
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <b>⏰ 提醒 ({{ stockReminders.length }})</b>
+                                <el-button size="small" type="warning" plain @click="showAddReminderInput = !showAddReminderInput">
+                                    {{ showAddReminderInput ? '收起' : '+ 提醒' }}
+                                </el-button>
+                            </div>
+                        </template>
+                        <!-- 新建提醒表单 -->
+                        <div v-if="showAddReminderInput" style="margin-bottom:12px;">
+                            <el-form label-width="70px" size="small">
+                                <el-form-item label="类型">
+                                    <el-radio-group v-model="reminderForm.type">
+                                        <el-radio value="price">价格</el-radio>
+                                        <el-radio value="time">时间</el-radio>
+                                    </el-radio-group>
+                                </el-form-item>
+                                <el-form-item :label="reminderForm.type === 'price' ? '条件' : '日期'">
+                                    <div v-if="reminderForm.type === 'price'" style="display:flex;gap:6px;">
+                                        <el-select v-model="reminderForm.condition" style="width:100px;">
+                                            <el-option label="≥" value="above" />
+                                            <el-option label="≤" value="below" />
+                                        </el-select>
+                                        <el-input-number v-model="reminderForm.priceValue" :min="0.01" :step="0.01" :precision="2" style="flex:1;" placeholder="目标价格" />
+                                    </div>
+                                    <el-date-picker v-else v-model="reminderForm.dateValue" type="datetime"
+                                        placeholder="选择提醒时间" style="width:100%;"
+                                        value-format="YYYY-MM-DD HH:mm" />
+                                </el-form-item>
+                                <el-form-item label="备注">
+                                    <el-input v-model="reminderForm.noteText" placeholder="提醒的目的或备注" />
+                                </el-form-item>
+                            </el-form>
+                            <div style="display:flex;justify-content:flex-end;gap:6px;">
+                                <el-button size="small" @click="showAddReminderInput = false; resetReminderForm()">取消</el-button>
+                                <el-button size="small" type="warning" @click="handleAddReminder"
+                                    :disabled="!canAddReminder">创建提醒</el-button>
+                            </div>
+                        </div>
+                        <!-- 提醒列表 -->
+                        <div v-if="stockReminders.length" class="reminder-list">
+                            <div v-for="r in stockReminders" :key="r.id" class="reminder-item"
+                                :class="{ 'reminder-triggered': r.triggered, 'reminder-disabled': !r.enabled }">
+                                <div class="reminder-icon">
+                                    <el-tag v-if="r.type === 'price'" size="small" :type="r.triggered ? 'info' : 'warning'" effect="dark">💰</el-tag>
+                                    <el-tag v-else size="small" :type="r.triggered ? 'info' : 'warning'">⏰</el-tag>
+                                </div>
+                                <div class="reminder-body">
+                                    <div class="reminder-target">
+                                        <template v-if="r.type === 'price'">
+                                            <span v-if="r.condition === 'above'">📈 涨破 </span>
+                                            <span v-else>📉 跌破 </span>
+                                            <b>¥{{ parseFloat(r.target_value).toFixed(2) }}</b>
+                                        </template>
+                                        <template v-else>
+                                            🗓️ <b>{{ r.target_value }}</b>
+                                        </template>
+                                        <el-tag v-if="r.triggered" size="mini" type="success" effect="dark" style="margin-left:6px;">已触发</el-tag>
+                                        <el-tag v-else-if="!r.enabled" size="mini" type="info" style="margin-left:6px;">已暂停</el-tag>
+                                    </div>
+                                    <div v-if="r.note_text" class="reminder-note">{{ r.note_text }}</div>
+                                    <div class="reminder-meta">
+                                        <span class="reminder-date">创建于 {{ r.created_at }}</span>
+                                        <div style="flex:1"></div>
+                                        <el-button size="mini" type="warning" link @click="handleToggleReminder(r)">
+                                            {{ r.enabled ? '暂停' : '启用' }}
+                                        </el-button>
+                                        <el-button size="mini" type="danger" link @click="handleDeleteReminder(r)">删除</el-button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div v-else style="color:#909399;font-size:13px;padding:8px 0;">
+                            暂无提醒，点击「+ 提醒」创建价格或时间提醒
+                        </div>
+                    </el-card>
 
                     <!-- ①-c 技术面详情（有数据时才显示） -->
                     <el-card v-if="profileData" shadow="hover" style="margin-bottom:12px;">
@@ -147,7 +260,7 @@
                 </template>
             </el-col>
 
-            <!-- ③ 右侧：观察池列表 -->
+            <!-- ③ 右侧：观察池列表（按市场+行业分组） -->
             <el-col :span="6">
                 <el-card shadow="hover" class="panel-list">
                     <template #header>
@@ -156,26 +269,72 @@
                             <el-button size="small" type="primary" plain @click="showAddDialog = true">+</el-button>
                         </div>
                     </template>
+                    <!-- 市场筛选 -->
+                    <div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap;">
+                        <el-tag v-for="opt in marketOptions" :key="opt"
+                            size="small"
+                            :type="marketFilter === opt ? 'primary' : 'info'"
+                            :effect="marketFilter === opt ? 'dark' : 'plain'"
+                            style="cursor:pointer;"
+                            @click="marketFilter = opt">
+                            {{ opt }}
+                        </el-tag>
+                    </div>
                     <div v-if="items.length" class="scroll-area">
-                        <div v-for="item in items" :key="item.code"
-                            class="watch-item"
-                            :class="'priority-' + item.priority"
-                            @click="selectItem(item)"
-                            :style="{ background: selected?.code === item.code ? '#ecf5ff' : '' }">
-                            <div class="watch-code">
-                                <el-tag size="small" :type="pType(item.priority)" effect="dark" style="margin-right:4px;">
-                                    {{ pLabel(item.priority) }}
-                                </el-tag>
-                                {{ item.code }}
+                        <template v-for="(group, gi) in groupedItems" :key="gi">
+                            <!-- 市场标题（首次出现该市场时显示） -->
+                            <div v-if="gi === 0 || groupedItems[gi-1].market !== group.market"
+                                style="font-size:13px;font-weight:bold;color:#909399;padding:6px 4px 2px;border-top:1px solid #eee;margin-top:4px;">
+                                {{ group.market }}
                             </div>
-                            <div class="watch-name">{{ item.name }}</div>
-                            <div class="watch-sector" v-if="item.sector">{{ item.sector }}</div>
-                        </div>
+                            <!-- 行业分组标题 -->
+                            <div style="font-size:12px;color:#b0b0b0;padding:4px 4px 2px 8px;">
+                                📂 {{ group.industry }}
+                                <span style="color:#909399;">({{ group.items.length }})</span>
+                            </div>
+                            <!-- 行业内的股票列表 -->
+                            <div v-for="item in group.items" :key="item.code"
+                                class="watch-item"
+                                :class="'priority-' + item.priority"
+                                @click="selectItem(item)"
+                                :style="{ background: selected?.code === item.code ? '#ecf5ff' : '' }">
+                                <div class="watch-code">
+                                    <el-tag size="small" :type="pType(item.priority)" effect="dark" style="margin-right:4px;">
+                                        {{ pLabel(item.priority) }}
+                                    </el-tag>
+                                    {{ item.code }}
+                                </div>
+                                <div class="watch-name">{{ item.name }}</div>
+                                <div class="watch-sector" v-if="item.sector">{{ item.sector }}</div>
+                            </div>
+                        </template>
                     </div>
                     <el-empty v-else description="观察池为空" :image-size="60" />
                 </el-card>
             </el-col>
         </el-row>
+
+        <!-- ==================== 买入对话框 ==================== -->
+        <el-dialog v-model="showBuyDialog" title="💰 买入" width="360px" @close="onBuyDialogClose">
+            <el-form label-width="70px">
+                <el-form-item label="股票">
+                    <span style="font-weight:bold;">{{ selected?.name }} ({{ selected?.code }})</span>
+                </el-form-item>
+                <el-form-item label="数量">
+                    <el-input-number v-model="buyQty" :min="1" :step="100" style="width:100%" />
+                </el-form-item>
+                <el-form-item label="成本价">
+                    <el-input-number v-model="buyCost" :min="0.01" :step="0.01" :precision="2" style="width:100%" />
+                </el-form-item>
+                <el-form-item label="合计">
+                    <span style="font-weight:bold;font-size:16px;">¥ {{ (buyQty * buyCost).toFixed(2) }}</span>
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <el-button @click="showBuyDialog = false">取消</el-button>
+                <el-button type="primary" @click="handleBuy" :loading="adding">确认买入</el-button>
+            </template>
+        </el-dialog>
 
         <!-- ==================== 添加股票对话框 ==================== -->
         <el-dialog v-model="showAddDialog" title="➕ 添加股票到观察池" width="480px">
@@ -286,7 +445,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { getWatchlist, addWatchItem, removeWatchItem, updateWatchItem, getStockProfile, searchStockInfo, saveSnapshot, deleteSnapshot, deleteDraft } from '../api/index.js'
+import { getWatchlist, addWatchItem, removeWatchItem, updateWatchItem, getStockProfile, searchStockInfo, saveSnapshot, deleteSnapshot, deleteDraft, addPosition, deletePosition, getPositions, addStockNote, deleteStockNote, getStockReminders, addStockReminder, deleteStockReminder, toggleStockReminder, getAllActiveReminders } from '../api/index.js'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
@@ -300,6 +459,111 @@ const savingSnapshot = ref(false)
 const showAddDialog = ref(false)
 const form = ref({ code: '', name: '', priority: 'medium', reason: '' })
 const searchText = ref('')
+
+// ===== 持仓（对接仓位管理）=====
+const positionsList = ref([])
+const showBuyDialog = ref(false)
+const buyQty = ref(100)
+const buyCost = ref(0)
+const isInPositions = computed(() => {
+    if (!selected.value?.code) return false
+    return positionsList.value.some(p => p.code === selected.value.code)
+})
+
+onMounted(async () => {
+    await loadData()
+    await loadPositions()
+})
+
+async function loadPositions() {
+    try {
+        const { data } = await getPositions()
+        positionsList.value = data.positions || []
+    } catch { positionsList.value = [] }
+}
+
+function openBuyDialog() {
+    buyCost.value = profileData.value?.price || selected.value?.last_price || 0
+    buyQty.value = 100
+    showBuyDialog.value = true
+}
+
+async function handleBuy() {
+    if (!selected.value || !buyQty.value || !buyCost.value) return
+    try {
+        await addPosition({
+            code: selected.value.code,
+            name: selected.value.name,
+            quantity: buyQty.value,
+            cost_price: buyCost.value,
+        })
+        ElMessage.success(`已买入 ${selected.value.name} ${buyQty.value}股 @ ¥${buyCost.value}`)
+        showBuyDialog.value = false
+        await loadPositions()
+    } catch (e) {
+        ElMessage.error(e.response?.data?.detail || '买入失败')
+    }
+}
+
+async function handleSell() {
+    if (!selected.value) return
+    try {
+        await deletePosition(selected.value.code)
+        ElMessage.success(`已卖出 ${selected.value.name}`)
+        await loadPositions()
+    } catch {
+        ElMessage.error('卖出失败')
+    }
+}
+
+// 买入弹窗
+function onBuyDialogClose() { showBuyDialog.value = false }
+
+// 市场筛选（全部/A股/港股/美股）
+const marketFilter = ref('全部')
+const marketOptions = ['全部', 'A股', '港股', '美股']
+
+// 按市场和行业分组
+const groupedItems = computed(() => {
+    const list = items.value || []
+    // 过滤
+    let filtered = list
+    if (marketFilter.value !== '全部') {
+        filtered = list.filter(i => {
+            const mkt = (i.market || '').toLowerCase()
+            if (marketFilter.value === '美股') return mkt === 'us_stock'
+            if (marketFilter.value === '港股') return mkt === 'hk_stock'
+            if (marketFilter.value === 'A股') return !mkt || ['us_stock','hk_stock'].includes(mkt) === false
+            return true
+        })
+    }
+    // 分组：市场 → 行业
+    const groups = {}
+    for (const item of filtered) {
+        const mkt = (item.market || '').toLowerCase()
+        const marketGroup = mkt === 'us_stock' ? '🇺🇸 美股'
+            : mkt === 'hk_stock' ? '🇭🇰 港股'
+            : '🇨🇳 A股'
+        // 行业清洗：美股行业可能是"美股"这种无意义的值
+        let industry = (item.industry || item.sector || '').trim()
+        if (!industry || industry === '美股' || industry === '港股') {
+            industry = '其他'
+        }
+        const groupKey = `${marketGroup}||${industry}`
+        if (!groups[groupKey]) {
+            groups[groupKey] = { market: marketGroup, industry, items: [] }
+        }
+        groups[groupKey].items.push(item)
+    }
+    // 转为有序数组：按市场排序，行业内按 priority + 名字
+    const marketOrder = { '🇨🇳 A股': 0, '🇭🇰 港股': 1, '🇺🇸 美股': 2 }
+    return Object.values(groups).sort((a, b) => {
+        const ma = marketOrder[a.market] ?? 9
+        const mb = marketOrder[b.market] ?? 9
+        if (ma !== mb) return ma - mb
+        return a.industry.localeCompare(b.industry, 'zh')
+    })
+})
 
 // 搜索股票建议（代码/名称/拼音首字母）
 async function querySearch(q, cb) {
@@ -317,9 +581,31 @@ function handleSelect(item) {
     form.value.name = item.name
 }
 
-// ===== 备注 =====
-const editingNotes = ref(false)
-const notesText = ref('')
+// ===== 多备注 =====
+const stockNotes = ref([])
+const showAddNoteInput = ref(false)
+const newNoteText = ref('')
+
+// ===== 提醒系统 =====
+const stockReminders = ref([])
+const showAddReminderInput = ref(false)
+const reminderForm = ref({
+    type: 'price',
+    condition: 'above',
+    priceValue: null,
+    dateValue: null,
+    noteText: '',
+})
+const canAddReminder = computed(() => {
+    if (reminderForm.value.type === 'price') {
+        return reminderForm.value.condition && reminderForm.value.priceValue > 0
+    }
+    return reminderForm.value.dateValue
+})
+
+function resetReminderForm() {
+    reminderForm.value = { type: 'price', condition: 'above', priceValue: null, dateValue: null, noteText: '' }
+}
 
 // ===== 当前分析数据 =====
 const profileData = ref(null)
@@ -329,10 +615,6 @@ const analyzing = ref(false)
 const stockHistory = ref([])
 const detailHist = ref(null)
 const showDetailDialog = ref(false)
-
-onMounted(async () => {
-    await loadData()
-})
 
 // 打开添加对话框时重置表单
 watch(showAddDialog, (v) => {
@@ -354,15 +636,19 @@ async function loadData() {
 
 function selectItem(item) {
     selected.value = item
-    notesText.value = item.notes || ''
-    editingNotes.value = false
     profileData.value = null
     stockHistory.value = []
     detailHist.value = null
+    stockNotes.value = []
+    stockReminders.value = []
+    showAddNoteInput.value = false
+    newNoteText.value = ''
 
-    // 加载当前分析 + 历次分析
+    // 加载当前分析 + 历次分析 + 备注 + 提醒
     loadProfile()
     loadStockHistory()
+    loadNotes()
+    loadReminders()
 }
 
 function pType(p) {
@@ -416,39 +702,92 @@ function goToHistoryAnalysis(rec) {
     router.push({ path: '/analysis', query: { code: rec.code } })
 }
 
-async function changePriority() {
-    if (!selected.value) return
-    const cur = selected.value.priority
-    const next = cur === 'high' ? 'medium' : cur === 'medium' ? 'low' : 'high'
+async function setPriority(prio) {
+    if (!selected.value || selected.value.priority === prio) return
     try {
-        await updateWatchItem(selected.value.code, next)
-        selected.value.priority = next
+        await updateWatchItem(selected.value.code, prio)
+        selected.value.priority = prio
         await loadData()
     } catch {
         ElMessage.error('更新失败')
     }
 }
 
-// ===== 备注 =====
-function startEditNotes() {
-    notesText.value = selected.value.notes || ''
-    editingNotes.value = true
-}
-function cancelEditNotes() {
-    editingNotes.value = false
-    notesText.value = selected.value.notes || ''
-}
-async function saveNotes() {
-    if (!selected.value) return
-    try {
-        await updateWatchItem(selected.value.code, selected.value.priority, notesText.value.trim())
-        selected.value.notes = notesText.value.trim()
-        editingNotes.value = false
-        ElMessage.success('备注已保存')
-        await loadData()
-    } catch {
-        ElMessage.error('保存失败')
+// ===== 多备注（从 stock_notes API 获取） =====
+async function loadNotes() {
+    if (!selected.value?.code) { stockNotes.value = []; return }
+    // 如果 profile 已经加载了 notes，直接用；否则单独查询
+    if (profileData.value?.notes?.length) {
+        stockNotes.value = profileData.value.notes
+        return
     }
+    try {
+        const { data } = await getStockProfile(selected.value.code)
+        stockNotes.value = data.notes || []
+    } catch { stockNotes.value = [] }
+}
+async function handleAddNote() {
+    if (!selected.value?.code || !newNoteText.value.trim()) return
+    try {
+        await addStockNote(selected.value.code, newNoteText.value.trim())
+        newNoteText.value = ''
+        ElMessage.success('备注已添加')
+        await loadNotes()
+    } catch { ElMessage.error('添加备注失败') }
+}
+async function handleDeleteNote(note) {
+    if (!selected.value?.code) return
+    try {
+        await deleteStockNote(selected.value.code, note.id)
+        ElMessage.success('备注已删除')
+        await loadNotes()
+    } catch { ElMessage.error('删除备注失败') }
+}
+
+// ===== 提醒系统 =====
+async function loadReminders() {
+    if (!selected.value?.code) { stockReminders.value = []; return }
+    try {
+        const { data } = await getStockReminders(selected.value.code)
+        stockReminders.value = data.reminders || []
+    } catch { stockReminders.value = [] }
+}
+async function handleAddReminder() {
+    if (!selected.value?.code) return
+    const f = reminderForm.value
+    let target_value = ''
+    if (f.type === 'price') {
+        target_value = String(f.priceValue)
+    } else {
+        target_value = f.dateValue
+    }
+    try {
+        await addStockReminder(selected.value.code, {
+            type: f.type,
+            condition: f.condition,
+            target_value,
+            note_text: f.noteText,
+        })
+        ElMessage.success('提醒已创建')
+        showAddReminderInput.value = false
+        resetReminderForm()
+        await loadReminders()
+    } catch { ElMessage.error('创建提醒失败') }
+}
+async function handleDeleteReminder(r) {
+    if (!selected.value?.code) return
+    try {
+        await deleteStockReminder(selected.value.code, r.id)
+        ElMessage.success('提醒已删除')
+        await loadReminders()
+    } catch { ElMessage.error('删除提醒失败') }
+}
+async function handleToggleReminder(r) {
+    if (!selected.value?.code) return
+    try {
+        await toggleStockReminder(selected.value.code, r.id)
+        r.enabled = r.enabled ? 0 : 1
+    } catch { ElMessage.error('操作失败') }
 }
 
 // ===== 分析 =====
@@ -459,6 +798,10 @@ async function loadProfile() {
     try {
         const { data } = await getStockProfile(selected.value.code)
         profileData.value = data
+        // 从 profile 返回的 notes 填充备注列表
+        if (data.notes) {
+            stockNotes.value = data.notes
+        }
         // profileData.analysis_history 里也包含历次记录，提取出来
         if (data.analysis_history?.length) {
             stockHistory.value = data.analysis_history
@@ -647,4 +990,45 @@ const detailTitle = computed(() => {
     display: flex; align-items: center; gap: 8px;
     font-size: 11px; color: #606266; flex-wrap: wrap;
 }
+
+/* 备注时间线 */
+.note-timeline {
+    max-height: 280px; overflow-y: auto;
+}
+.note-item {
+    display: flex; gap: 10px; padding: 8px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+.note-item:last-child { border-bottom: none; }
+.note-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #409eff; margin-top: 6px; flex-shrink: 0;
+}
+.note-body { flex: 1; min-width: 0; }
+.note-meta {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+}
+.note-date { color: #909399; font-size: 11px; }
+.note-text {
+    font-size: 13px; color: #303133;
+    line-height: 1.6; white-space: pre-wrap; word-break: break-all;
+}
+
+/* 提醒列表 */
+.reminder-list { max-height: 300px; overflow-y: auto; }
+.reminder-item {
+    display: flex; gap: 10px; padding: 8px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+.reminder-item:last-child { border-bottom: none; }
+.reminder-item.reminder-triggered { opacity: 0.6; }
+.reminder-item.reminder-disabled { opacity: 0.5; }
+.reminder-icon { flex-shrink: 0; }
+.reminder-body { flex: 1; min-width: 0; }
+.reminder-target { font-size: 13px; margin-bottom: 2px; }
+.reminder-note { font-size: 12px; color: #606266; margin-bottom: 2px; }
+.reminder-meta {
+    display: flex; align-items: center; gap: 4px; margin-top: 4px;
+}
+.reminder-date { color: #909399; font-size: 11px; }
 </style>

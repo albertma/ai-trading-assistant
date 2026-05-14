@@ -11,7 +11,11 @@ from backend.services.database.stock_db import (
     save_analysis, get_history, get_all_history, get_stock_history,
 
     # 笔记
-    add_note, get_notes,
+    add_note, get_notes, delete_note,
+
+    # 提醒
+    add_reminder, get_reminders, get_all_active_reminders,
+    delete_reminder, toggle_reminder, mark_reminder_triggered,
 
     # 快照/草稿
     save_snapshot, delete_snapshot, get_snapshots,

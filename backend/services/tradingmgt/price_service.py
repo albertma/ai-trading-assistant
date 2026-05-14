@@ -36,9 +36,11 @@ def detect_market(code: str) -> str:
     """判断股票所属市场：优先查 stock_info.market，代码格式兜底"""
     c = code.strip().upper()
 
-    # ① 优先从 SQLite stock_info 表查
+    # ① 优先从 SQLite stock_info 表查（统一 A股交易所标记）
     db_market = _get_market_from_db(code)
     if db_market:
+        if db_market in ('沪市', '深市', '创业板', '科创板', '京市', 'a_stock', 'A股'):
+            return 'a_stock'
         return db_market
 
     # ② 已知名单

@@ -50,6 +50,17 @@ def init_db():
             note TEXT NOT NULL,
             created_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
+        CREATE TABLE IF NOT EXISTS stock_reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            type TEXT NOT NULL CHECK(type IN ('price','time')),
+            condition TEXT NOT NULL CHECK(condition IN ('above','below','date')),
+            target_value TEXT NOT NULL,
+            note_text TEXT DEFAULT '',
+            enabled INTEGER DEFAULT 1,
+            triggered INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now', 'localtime'))
+        );
         CREATE TABLE IF NOT EXISTS analysis_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             code TEXT NOT NULL,
@@ -527,17 +538,19 @@ def get_notes(code: str) -> list:
 # ===== 观察池 =====
 
 def get_watchlist() -> list:
-    """获取观察池所有股票"""
+    """获取观察池所有股票（含市场和行业信息）"""
     conn = get_db()
     rows = conn.execute("""
         SELECT w.*, s.price as last_price, s.change_pct, s.ma5, s.ma20, s.rsi14,
-               s.bullish_alignment, s.risk_passed
+               s.bullish_alignment, s.risk_passed,
+               i.market, i.industry
         FROM watchlist w
         LEFT JOIN (
             SELECT code, price, change_pct, ma5, ma20, rsi14, bullish_alignment, risk_passed,
                    ROW_NUMBER() OVER (PARTITION BY code ORDER BY analysis_date DESC) as rn
             FROM stock_archive
         ) s ON w.code = s.code AND s.rn = 1
+        LEFT JOIN stock_info i ON w.code = i.code
         ORDER BY
             CASE w.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
             w.added_date DESC
@@ -1207,3 +1220,72 @@ def evaluate_risk_rules(code: str, tech: dict | None, fundamental: dict | None,
             })
 
     return results
+
+
+# ===== 备注删除 =====
+
+def delete_note(note_id: int) -> bool:
+    conn = get_db()
+    cur = conn.execute("DELETE FROM stock_notes WHERE id = ?", (note_id,))
+    conn.commit()
+    conn.close()
+    return cur.rowcount > 0
+
+
+# ===== 提醒系统 =====
+
+def add_reminder(code: str, rtype: str, condition: str, target_value: str, note_text: str = "") -> int:
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO stock_reminders (code, type, condition, target_value, note_text) VALUES (?, ?, ?, ?, ?)",
+        (code, rtype, condition, target_value, note_text),
+    )
+    conn.commit()
+    conn.close()
+    return cur.lastrowid
+
+
+def get_reminders(code: str) -> list:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM stock_reminders WHERE code = ? ORDER BY created_at DESC",
+        (code,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_all_active_reminders() -> list:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM stock_reminders WHERE enabled = 1 AND triggered = 0 ORDER BY created_at DESC",
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_reminder(reminder_id: int) -> bool:
+    conn = get_db()
+    cur = conn.execute("DELETE FROM stock_reminders WHERE id = ?", (reminder_id,))
+    conn.commit()
+    conn.close()
+    return cur.rowcount > 0
+
+
+def toggle_reminder(reminder_id: int, enabled: bool = None) -> bool:
+    conn = get_db()
+    if enabled is not None:
+        cur = conn.execute("UPDATE stock_reminders SET enabled = ? WHERE id = ?", (int(enabled), reminder_id))
+    else:
+        cur = conn.execute("UPDATE stock_reminders SET enabled = 1 - enabled WHERE id = ?", (reminder_id,))
+    conn.commit()
+    conn.close()
+    return cur.rowcount > 0
+
+
+def mark_reminder_triggered(reminder_id: int) -> bool:
+    conn = get_db()
+    cur = conn.execute("UPDATE stock_reminders SET triggered = 1 WHERE id = ?", (reminder_id,))
+    conn.commit()
+    conn.close()
+    return cur.rowcount > 0

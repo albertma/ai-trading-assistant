@@ -7,7 +7,7 @@ import os
 from datetime import date, timedelta
 
 from backend.config import MARKET_DATA_DIR
-from backend.services.db_client import save_analysis, get_history, get_all_history, get_stock_history, add_note, get_notes, get_chat_history, get_financial_reports, save_financial_reports, save_snapshot, delete_snapshot, delete_draft, get_snapshots, save_draft_notes, get_draft_notes
+from backend.services.db_client import save_analysis, get_history, get_all_history, get_stock_history, add_note, get_notes, delete_note, get_chat_history, get_financial_reports, save_financial_reports, save_snapshot, delete_snapshot, delete_draft, get_snapshots, save_draft_notes, get_draft_notes, add_reminder, get_reminders, delete_reminder, toggle_reminder, get_all_active_reminders, mark_reminder_triggered
 from backend.routers.analysis import analyze_stock as _do_analysis
 from backend.routers.fundamental import fundamental_analysis as _do_fundamental
 
@@ -270,6 +270,58 @@ def delete_analysis_draft(code: str, analysis_date: str):
     if not ok:
         raise HTTPException(404, "草稿不存在或已删除")
     return {"status": "ok"}
+
+
+# ===== 备注删除 =====
+
+@router.delete("/{code}/note/{note_id}")
+def delete_stock_note(code: str, note_id: int):
+    ok = delete_note(note_id)
+    if not ok:
+        raise HTTPException(404, "备注不存在或已删除")
+    return {"status": "ok"}
+
+
+# ===== 提醒系统 =====
+
+@router.get("/{code}/reminders")
+def list_reminders(code: str):
+    return {"code": code, "reminders": get_reminders(code)}
+
+
+@router.post("/{code}/reminders")
+def create_reminder(code: str, data: dict):
+    rtype = (data or {}).get("type", "").strip()
+    condition = (data or {}).get("condition", "").strip()
+    target_value = (data or {}).get("target_value", "").strip()
+    note_text = (data or {}).get("note_text", "").strip()
+    if not rtype or not condition or not target_value:
+        raise HTTPException(400, "type/condition/target_value 不能为空")
+    if rtype not in ("price", "time") or condition not in ("above", "below", "date"):
+        raise HTTPException(400, "参数值不合法")
+    rid = add_reminder(code, rtype, condition, target_value, note_text)
+    return {"status": "ok", "reminder_id": rid}
+
+
+@router.delete("/{code}/reminders/{reminder_id}")
+def remove_reminder(code: str, reminder_id: int):
+    ok = delete_reminder(reminder_id)
+    if not ok:
+        raise HTTPException(404, "提醒不存在或已删除")
+    return {"status": "ok"}
+
+
+@router.patch("/{code}/reminders/{reminder_id}/toggle")
+def toggle_reminder_status(code: str, reminder_id: int):
+    ok = toggle_reminder(reminder_id)
+    if not ok:
+        raise HTTPException(404, "提醒不存在")
+    return {"status": "ok"}
+
+
+@router.get("/reminders/active")
+def all_active_reminders():
+    return {"reminders": get_all_active_reminders()}
 
 
 TAGS_PATH = os.path.expanduser("~/Jarvis/stock_tags.json")

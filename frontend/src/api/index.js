@@ -140,6 +140,27 @@ export function addStockNote(code, note) {
     return api.post(`/profile/${code}/note`, { note })
 }
 
+export function deleteStockNote(code, noteId) {
+    return api.delete(`/profile/${code}/note/${noteId}`)
+}
+
+// ========== 提醒 ==========
+export function getStockReminders(code) {
+    return api.get(`/profile/${code}/reminders`)
+}
+export function addStockReminder(code, data) {
+    return api.post(`/profile/${code}/reminders`, data)
+}
+export function deleteStockReminder(code, reminderId) {
+    return api.delete(`/profile/${code}/reminders/${reminderId}`)
+}
+export function toggleStockReminder(code, reminderId) {
+    return api.patch(`/profile/${code}/reminders/${reminderId}/toggle`)
+}
+export function getAllActiveReminders() {
+    return api.get('/profile/reminders/active')
+}
+
 export function saveSnapshot(code, data) {
     return api.post(`/profile/${code}/save-snapshot`, data)
 }
