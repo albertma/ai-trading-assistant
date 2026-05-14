@@ -207,6 +207,7 @@ def market_overview(
             "close": r.get("close"),
             "change_pct": r.get("change_pct"),
             "amount": round(r.get("amount", 0) / 1e8, 2) if r.get("amount") else None,
+            "sector": r.get("sector", ""),
         })
 
     # 涨跌幅TOP10
@@ -214,10 +215,10 @@ def market_overview(
     top_losers = []
     sorted_up = valid.sort_values("change_pct", ascending=False).head(10)
     for _, r in sorted_up.iterrows():
-        top_gainers.append({"code": r.get("code",""), "name": r.get("name",""), "change_pct": r.get("change_pct")})
+        top_gainers.append({"code": r.get("code",""), "name": r.get("name",""), "change_pct": r.get("change_pct"), "sector": r.get("sector", "")})
     sorted_down = valid.sort_values("change_pct").head(10)
     for _, r in sorted_down.iterrows():
-        top_losers.append({"code": r.get("code",""), "name": r.get("name",""), "change_pct": r.get("change_pct")})
+        top_losers.append({"code": r.get("code",""), "name": r.get("name",""), "change_pct": r.get("change_pct"), "sector": r.get("sector", "")})
 
     # 当前日期的可用session
     dates_info = _list_available()
@@ -269,7 +270,7 @@ def market_overview(
 
 @router.get("/sentiment-cycle")
 def sentiment_cycle(
-    days: int = Query(7, description="回溯天数"),
+    days: int = Query(30, description="回溯天数"),
 ):
     """市场情绪周期分析：返回最近N个交易日的情绪指标时序"""
     dates_info = _list_available()
@@ -312,8 +313,11 @@ def sentiment_cycle(
             "stage_label": stage["label"],
         })
 
+    # 倒序排列（最新在前）
+    records.reverse()
+
     # 综合当前阶段判断
-    current = records[-1] if records else None
+    current = records[0] if records else None
     assessment = _assess_cycle(records) if records else {}
 
     return {
@@ -342,22 +346,22 @@ def _classify_cycle_stage(ratio: float, avg_chg: float, limit_up: int, limit_dow
 
 
 def _assess_cycle(records: list) -> dict:
-    """综合评估周期趋势"""
+    """综合评估周期趋势（records已倒序：最新在前）"""
     if len(records) < 3:
         return {"trend": "数据不足", "outlook": "neutral"}
 
-    recent = records[-3:]
+    recent = records[:3]
     ratios = [r["ratio"] for r in recent]
     avgs = [r["avg_change_pct"] for r in recent]
     limits = [r["limit_up"] for r in recent]
 
-    # 趋势方向
-    ratio_trend = "rising" if ratios[-1] > ratios[0] else "falling" if ratios[-1] < ratios[0] else "flat"
-    avg_trend = "rising" if avgs[-1] > avgs[0] else "falling" if avgs[-1] < avgs[0] else "flat"
-    limit_trend = "rising" if limits[-1] > limits[0] else "falling" if limits[-1] < limits[0] else "flat"
+    # 趋势方向：ratios[0]最新，ratios[-1]最旧
+    ratio_trend = "rising" if ratios[0] > ratios[-1] else "falling" if ratios[0] < ratios[-1] else "flat"
+    avg_trend = "rising" if avgs[0] > avgs[-1] else "falling" if avgs[0] < avgs[-1] else "flat"
+    limit_trend = "rising" if limits[0] > limits[-1] else "falling" if limits[0] < limits[-1] else "flat"
 
     # 当前阶段
-    current_stage = records[-1]["stage"]
+    current_stage = records[0]["stage"]
 
     # 综合判断
     if current_stage in ("climax", "fermentation"):

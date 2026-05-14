@@ -351,7 +351,7 @@ def _create_daily_training(today: str, conn: sqlite3.Connection) -> dict:
 
     # 随机选一个模型（基于今日特征+轮询）
     row = conn.execute(
-        "SELECT id, name, icon, category, description, detail, tags FROM mental_models ORDER BY RANDOM() LIMIT 1"
+        "SELECT id, name, icon, category, description, application, scenario, example, detail, tags FROM mental_models ORDER BY RANDOM() LIMIT 1"
     ).fetchone()
     if not row:
         return {"error": "思维模型库为空"}
@@ -401,13 +401,63 @@ def _create_daily_training(today: str, conn: sqlite3.Connection) -> dict:
 
 
 def _build_training_answer(model: dict, market: dict, today: str) -> str:
-    """生成训练答案：将思维模型与今日行情结合"""
+    """生成训练答案：模型解释 + 今日行情结合 + 训练题"""
     model_name = model["name"]
+    model_icon = model.get("icon", "🧠")
+    model_category = model.get("category", "")
     model_desc = model["description"]
+    model_application = model.get("application", "")
+    model_scenario = model.get("scenario", "")
+    model_example = model.get("example", "")
+    model_detail = model.get("detail", "")
+
+    # 从 detail 中提取核心理念（第一段）
+    core_concept = ""
+    if "核心理念" in model_detail:
+        parts = model_detail.split("## 核心理念")
+        if len(parts) > 1:
+            core_part = parts[1].split("##")[0].strip()
+            # 取前150字
+            core_concept = core_part[:200]
+    if not core_concept:
+        core_concept = model_desc
+
+    # 从 detail 中提取 A股实战
+    a_share_tip = ""
+    for section_title in ["A股实战", "A股应用", "实战应用"]:
+        if section_title in model_detail:
+            parts = model_detail.split(f"## {section_title}")
+            if len(parts) > 1:
+                a_share_part = parts[1].split("##")[0].strip()
+                a_share_tip = a_share_part[:200]
+                break
+
     model_question = _get_model_question(model_name)
 
     if not market:
-        return f"## 🧠 今日思维模型：{model_name}\n\n**模型描述：** {model_desc}\n\n**今日无行情数据，无法生成结合训练。**\n\n**思考题：** {model_question}"
+        return f"""## {model_icon} 今日思维模型：{model_name}
+
+**分类：** {model_category}
+
+### 📖 模型解释
+
+**是什么：** {model_desc}
+
+**核心理念：** {core_concept}
+
+**如何应用：** {model_application}
+
+**何时使用：** {model_scenario}
+
+**案例：** {model_example}
+
+### ✍️ 训练题
+
+{model_question}
+
+---
+
+*今日无行情数据，但模型学习不受影响。思考上面问题并记录你的答案。*"""
 
     up = market.get("up", 0)
     down = market.get("down", 0)
@@ -431,7 +481,46 @@ def _build_training_answer(model: dict, market: dict, today: str) -> str:
 
     model_insight = _get_model_insight(model_name, market)
 
-    answer = f"""## 🧠 {today} 思维模型训练：{model_name}
+    # A股实战 tip
+    a_share_section = ""
+    if a_share_tip:
+        a_share_section = f"""
+
+### 🎯 今日A股实战提示
+
+{a_share_tip}
+
+"""
+
+    answer = f"""## {model_icon} 今日思维模型训练：{model_name}
+
+**分类：** {model_category}
+
+---
+
+### 📖 模型解释
+
+**🧩 是什么？**
+
+{model_desc}
+
+**💡 核心理念**
+
+{core_concept}
+
+**🛠️ 如何应用在投资中？**
+
+{model_application}
+
+**📌 什么时候用？**
+
+{model_scenario}
+
+**📝 案例**
+
+{model_example}
+{a_share_section}
+---
 
 ### 📊 今日市场状态
 
@@ -444,21 +533,16 @@ def _build_training_answer(model: dict, market: dict, today: str) -> str:
 | 日内最强 | {max_up:+.2f}% |
 | 日内最弱 | {max_down:+.2f}% |
 
-### 📖 模型回顾：{model_name}
-
-**核心：** {model_desc}
-
 ### 🔗 模型如何连接今日行情？
 
 {model_insight}
 
-### ✍️ 训练题
+### ✍️ 今日训练题
 
 {model_question}
 
 ---
-*明天来验证：根据{model_name}的逻辑，看看明日的走势如何印证或挑战这个分析。*
-"""
+*明天会基于今日行情自动生成反思。好好思考上面的问题，看看现实的答案是什么。*"""
     return answer
 
 
@@ -466,18 +550,33 @@ def _build_prediction(model: dict, market: dict) -> str:
     """基于模型逻辑生成对明天的预测"""
     name = model["name"]
     up_ratio = market.get("up_ratio", 50)
+    avg_chg = market.get("avg_change", 0)
+    max_up = market.get("max_up", 0)
+    max_down = market.get("max_down", 0)
 
     predictions = {
         "均值回归": f"今日涨跌比{up_ratio}%，{'偏热' if up_ratio > 60 else '偏冷' if up_ratio < 40 else '均衡'}。均值回归思维提示：明日可能出现{'回调' if up_ratio > 60 else '反弹' if up_ratio < 40 else '延续震荡'}",
-        "反脆弱": f"观察今日波动特征，如果明日波动加大，反脆弱结构将从中受益。关注明日波动率是否上升",
+        "反脆弱": f"今日波动{'较大' if abs(avg_chg) > 1.5 else '较小'}。如果明日波动加大，反脆弱结构将从中受益。关注明日波动率是否上升",
         "反馈回路": f"今日涨跌比{up_ratio}%，{'正反馈强化中，明日可能延续趋势' if up_ratio > 60 or up_ratio < 30 else '负反馈主导，明日可能出现均值回归'}",
         "二阶效应": f"关注今日强势板块明日的资金流向二阶效应——资金从哪来、会不会扩散到关联板块",
         "从众效应": f"今日涨跌比{up_ratio}%显示{'一致性偏强，警惕明日反转' if abs(up_ratio - 50) > 20 else '市场分歧不大，明日可能延续'}",
-        "锚定效应": f"投资者可能被今日的{('涨幅' if up_ratio > 50 else '跌幅')}锚定，影响明日开盘判断。关注明日开盘是否与今日收盘有显著差异",
+        "锚定效应": f"投资者可能被今日的{'上涨' if avg_chg > 0 else '下跌'}锚定，影响明日开盘判断。关注明日开盘是否与今日收盘有显著差异",
         "纳什均衡": f"今日格局下的均衡状态是否可持续？关注明日是否有打破均衡的催化事件",
-        "安全边际": f"今日{'普涨' if up_ratio > 60 else '下跌'}后关注估值安全边际的变化——{'上涨压缩安全边际' if up_ratio > 60 else '下跌创造安全边际'}",
+        "安全边际": f"今日{'普涨' if up_ratio > 60 else '下跌'}后关注估值安全边际的变化——{'上涨压缩安全边际，明日追高风险加大' if up_ratio > 60 else '下跌创造安全边际，可筛选被错杀的标的'}",
         "机会成本": f"今日市场格局下，当前持仓的机会成本是否发生变化？关注明日是否出现更好的替代方向",
         "第二层思维": f"市场对今日行情的共识是什么？明日是否会出现与共识相反的走势——关注盘前预期差",
+        "能力圈": f"今日{'热点较多' if up_ratio > 60 else '板块分化明显'}，能力圈要求你只做自己懂的。预测：明日非能力圈内的追涨行为大概率亏损，守住熟悉领域的个股",
+        "复利效应": f"今日{'上涨' if avg_chg > 0 else '下跌'}幅度{abs(avg_chg):.1f}%，一次涨跌不是问题，复利看连续性。预测：明日市场斜率可能放缓，关键在于不出现大回撤",
+        "路径依赖": f"今日行情延续了近期的{'强势' if up_ratio > 55 else '弱势'}格局。预测：除非出现外部催化打破路径，否则明日趋势大概率延续",
+        "黑天鹅": f"今日市场{'相对平静' if abs(avg_chg) < 1 else '波动较大'}，但平静期恰是黑天鹅最容易被忽视的时候。预测：关注明日可能出现的预期外事件",
+        "确认偏误": f"今日{'涨多跌少' if up_ratio > 50 else '跌多涨少'}的环境容易强化看{'多' if up_ratio > 50 else '空'}者的确认偏误。预测：明日应主动寻找反向信号，警惕一致性预期被打破",
+        "幸存者偏差": f"今日涨幅榜上的明星股吸引眼球，但幸存者偏差让你看不到更多下跌的股票。预测：明日关注跌幅榜中被错杀的标的，而非追涨今日的幸存者",
+        "红皇后效应": f"今日{'强势板块与其他板块差距拉大' if abs(max_up) > 3 else '板块间差距不大'}。红皇后效应下你必须比别人跑得更快才能保持位置。预测：明日弱势板块可能有修复性反弹",
+        "生态位": f"今日市场生态中，不同市值和风格的板块占据不同生态位。预测：明日大小盘风格可能发生切换，关注资金从拥挤生态位流向冷门生态位",
+        "创造性破坏": f"今日{'领涨板块体现了创新驱动的特征' if up_ratio > 50 else '市场虽弱但部分创新品值得关注'}。预测：明日新技术/新政策相关板块可能成为破坏性创新的受益者",
+        "杠铃策略": f"今日{'波动较大' if abs(avg_chg) > 1.5 else '波动温和'}，杠铃策略（极致保守+极致进取）优于中间仓位。预测：明日若波动加大，杠铃结构将跑赢大盘",
+        "涌现": f"今日上涨{market.get('up',0)}/下跌{market.get('down',0)}，市场行为是个股行为的涌现结果。预测：关注今日走强的板块中是否有涌现出来的细分方向",
+        "熵增定律": f"今日市场{'趋于混乱' if abs(avg_chg) > 1.5 else '趋于有序'}。预测：明日可能从{'高熵回归有序' if abs(avg_chg) > 1.5 else '低熵走向混沌'}，做好预案",
     }
 
     return predictions.get(name, f"基于「{name}」模型观察明日市场如何演绎")
@@ -539,7 +638,7 @@ def get_training_history(limit: int = Query(30, le=100)):
     """获取训练历史"""
     conn = get_db()
     rows = conn.execute(
-        "SELECT id, model_name, training_date, prediction, next_day_result, accuracy FROM model_trainings ORDER BY training_date DESC LIMIT ?",
+        "SELECT id, model_name, training_date, prediction, user_prediction, next_day_result, accuracy, reflection, user_answer FROM model_trainings ORDER BY training_date DESC LIMIT ?",
         (limit,)
     ).fetchall()
     conn.close()
@@ -570,6 +669,42 @@ def verify_training(training_id: int, next_day_result: str = "", accuracy: str =
     conn.commit()
     conn.close()
     return {"status": "ok", "id": training_id}
+
+
+@router.put("/daily-training/{training_id}/prediction")
+def save_user_prediction(training_id: int, user_prediction: str = ""):
+    """保存用户的预测内容（同时清除旧评价，等待次日重新反思）"""
+    conn = get_db()
+    conn.execute(
+        "UPDATE model_trainings SET user_prediction = ?, accuracy = '', reflection = '', next_day_result = '' WHERE id = ?",
+        (user_prediction, training_id)
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "id": training_id}
+
+
+@router.put("/daily-training/{training_id}/answer")
+def save_training_answer(training_id: int, user_answer: str = ""):
+    """保存训练题的答案"""
+    conn = get_db()
+    conn.execute(
+        "UPDATE model_trainings SET user_answer = ? WHERE id = ?",
+        (user_answer, training_id)
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "id": training_id}
+
+
+@router.delete("/daily-training/{training_id}")
+def delete_training(training_id: int):
+    """删除训练记录"""
+    conn = get_db()
+    conn.execute("DELETE FROM model_trainings WHERE id = ?", (training_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "deleted": training_id}
 
 
 # -----------------------------------------------------------
@@ -1274,4 +1409,168 @@ def get_sector_indices_api(
         "sector_names": sorted(sectors_map.keys()),
         "base_date": base_date,
         "total_records": len(data),
+    }
+
+
+# -----------------------------------------------------------
+# API: 自动反思（次日收盘后对比预测与实际行情）
+# -----------------------------------------------------------
+
+def _compute_prediction_direction(prediction: str, model_name: str) -> str:
+    """从预测文本中提取方向：看涨/看跌/震荡"""
+    p = prediction.lower()
+    name = model_name.lower()
+
+    if "均值回归" in name:
+        if "回调" in p: return "看跌"
+        if "反弹" in p: return "看涨"
+    if "反馈回路" in name:
+        if "延续趋势" in p: return "看涨"
+        if "均值回归" in p: return "看跌"
+    if "从众效应" in name:
+        if "反转" in p: return "看跌"
+        if "延续" in p: return "看涨"
+    if "反脆弱" in name or "杠铃策略" in name or "黑天鹅" in name:
+        return "中性"
+    if any(kw in p for kw in ["回调", "回落", "下跌", "承压", "兑现", "警惕"]):
+        return "看跌"
+    if any(kw in p for kw in ["反弹", "上涨", "延续趋势", "延续", "走强"]):
+        return "看涨"
+    return "中性"
+
+
+def _generate_auto_reflection(training: dict, actual_market: dict) -> dict:
+    """生成自动反思：对比预测 vs 实际行情"""
+    direction = _compute_prediction_direction(training.get("user_prediction", training.get("prediction", "")), training["model_name"])
+    avg_chg = actual_market.get("avg_change", 0)
+    up_ratio = actual_market.get("up_ratio", 50)
+
+    if avg_chg > 0.5 and up_ratio > 55:
+        actual_direction = "看涨"
+    elif avg_chg < -0.5 and up_ratio < 45:
+        actual_direction = "看跌"
+    else:
+        actual_direction = "震荡"
+
+    if direction == actual_direction:
+        accuracy = "准确"
+        match_label = "✅ 方向判断准确"
+    elif actual_direction == "震荡" and direction == "中性":
+        accuracy = "准确"
+        match_label = "✅ 震荡判断准确"
+    elif direction == "中性":
+        accuracy = "部分准确"
+        match_label = "🟡 中性预测，实际有方向"
+    else:
+        accuracy = "不准确"
+        match_label = "❌ 方向判断有误"
+
+    lines = [
+        f"📊 **预测回顾：{training['model_name']}**",
+        "",
+        f"**预测方向：** {direction}",
+        f"**实际走势：** {actual_direction}（平均涨跌{avg_chg:+.2f}%，上涨占比{up_ratio}%）",
+        "",
+        f"**结论：** {match_label}",
+        "",
+    ]
+
+    if accuracy == "准确":
+        if direction == "看涨":
+            lines.append("预测看涨，实际上涨确认。市场按预期方向运行，模型逻辑有效。")
+            lines.append("💡 **反思提示：** 当预测被验证准确时，问自己——这是模型的洞察力还是运气？")
+        elif direction == "看跌":
+            lines.append("预测回调，实际下跌确认。风险预判正确。")
+            lines.append("💡 **反思提示：** 准确预判风险和准确预判机会同样重要。这次风险信号的触发条件是什么？")
+        else:
+            lines.append("预测震荡/中性，实际市场波动有限，方向不明。")
+            lines.append("💡 **反思提示：** 震荡市场中「不做判断」本身就是正确的判断。")
+    elif accuracy == "部分准确":
+        lines.append("预测中性但市场走出了方向，或预测有方向但市场震荡。")
+        lines.append("💡 **反思提示：** 是否有突发消息、资金异动或政策变化被忽略？")
+    else:
+        if direction == "看涨":
+            lines.append("预测上涨但实际下跌，模型信号失效。")
+        elif direction == "看跌":
+            lines.append("预测下跌但实际上涨，风险预判失误。")
+        else:
+            lines.append("预测中性/震荡但市场走出明显方向。")
+        lines.append("💡 **反思提示：** ①模型不适用当前环境？②数据不完整？③忽略关键变量？记下教训！")
+
+    lines.extend([
+        "",
+        f"**今日市场概况：**",
+        f"- 全市场平均涨跌：{avg_chg:+.2f}%",
+        f"- 上涨/下跌：{actual_market.get('up', '?')}/{actual_market.get('down', '?')}",
+        f"- 涨跌比：{up_ratio}%",
+        f"- 日内最强：{actual_market.get('max_up', '?'):+.2f}%",
+        f"- 日内最弱：{actual_market.get('max_down', '?'):+.2f}%",
+    ])
+
+    return {
+        "accuracy": accuracy,
+        "next_day_result": f"实际走势{direction}（涨跌{avg_chg:+.2f}%，上涨占比{up_ratio}%）",
+        "reflection": "\n".join(lines),
+    }
+
+
+@router.post("/daily-training/auto-reflect")
+def auto_reflect_all():
+    """自动反思：用今日行情对比昨日预测，生成反思报告"""
+    today = date.today().isoformat()
+    today_dt = date.fromisoformat(today)
+    yesterday = (today_dt - timedelta(days=1)).isoformat()
+
+    conn = get_db()
+    yesterday_rows = conn.execute(
+        "SELECT * FROM model_trainings WHERE training_date = ? AND user_prediction != ''",
+        (yesterday,)
+    ).fetchall()
+
+    if not yesterday_rows:
+        conn.close()
+        return {
+            "date": today, "yesterday": yesterday, "reflected": 0,
+            "message": f"{yesterday} 无待反思的训练记录",
+        }
+
+    from backend.routers.market import _load_csv
+    df = _load_csv(today, "close")
+    if df is None:
+        df = _load_csv(today, "noon")
+    if df is None:
+        conn.close()
+        return {"date": today, "yesterday": yesterday, "reflected": 0, "message": f"{today} 无行情数据"}
+
+    valid = df[df["change_pct"].notna()]
+    market_summary = {
+        "total": len(valid),
+        "up": int((valid["change_pct"] > 0).sum()),
+        "down": int((valid["change_pct"] < 0).sum()),
+        "avg_change": round(float(valid["change_pct"].mean()), 2),
+        "max_up": round(float(valid["change_pct"].max()), 2),
+        "max_down": round(float(valid["change_pct"].min()), 2),
+        "up_ratio": round(int((valid["change_pct"] > 0).sum()) / len(valid) * 100, 1),
+    }
+
+    reflected_count = 0
+    results = []
+    for row in yesterday_rows:
+        training = dict(row)
+        if training.get("reflection"):
+            continue
+        ref_data = _generate_auto_reflection(training, market_summary)
+        conn.execute(
+            "UPDATE model_trainings SET next_day_result = ?, accuracy = ?, reflection = ? WHERE id = ?",
+            (ref_data["next_day_result"], ref_data["accuracy"], ref_data["reflection"], training["id"])
+        )
+        reflected_count += 1
+        results.append({"id": training["id"], "model_name": training["model_name"], "accuracy": ref_data["accuracy"]})
+
+    conn.commit()
+    conn.close()
+    return {
+        "date": today, "yesterday": yesterday, "reflected": reflected_count,
+        "market_summary": market_summary, "results": results,
+        "message": f"已对 {reflected_count} 条昨日训练记录完成自动反思",
     }

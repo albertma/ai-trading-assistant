@@ -19,7 +19,7 @@ export function getSectors(date) {
     return api.get('/market/sectors', { params })
 }
 
-export function getSentimentCycle(days = 7) {
+export function getSentimentCycle(days = 30) {
     return api.get('/market/sentiment-cycle', { params: { days } })
 }
 
