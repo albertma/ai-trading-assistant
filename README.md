@@ -13,7 +13,7 @@ ai-trading-assistant/
 ├── backend/
 │   ├── main.py                  # FastAPI 主入口
 │   ├── config.py                # 配置项（路径、端口等）
-│   ├── patterns.py              # K线形态识别 + 量价模式
+│   ├── patterns.py              # K线形态识别 + 量价模式（17+10种）
 │   ├── models/                  # 数据模型
 │   ├── routers/                 # API 路由
 │   │   ├── market.py            # 市场行情、情绪周期
@@ -22,7 +22,7 @@ ai-trading-assistant/
 │   │   ├── watchlist.py         # 观察池
 │   │   ├── risk.py / risk_rules.py  # 风控
 │   │   ├── reports.py           # 复盘报告
-│   │   ├── mental_models.py     # 思维模型训练
+│   │   ├── mental_models.py     # 思维模型训练（22个模型）
 │   │   ├── fundamental.py       # 基本面分析
 │   │   ├── profile.py           # 个股档案
 │   │   ├── predict.py           # AI 预测
@@ -38,8 +38,14 @@ ai-trading-assistant/
 │   │   ├── components/          # 通用组件
 │   │   └── api/index.js         # API 封装
 │   └── package.json
+├── scripts/                     # ⭐ 外部依赖与运维脚本
+│   ├── setup.sh                 #   一键环境搭建
+│   ├── requirements.txt         #   Python 依赖清单
+│   ├── fetch_data.sh            #   A股行情数据拉取
+│   ├── migrate_industry_chain.py   # 行业链迁移
+│   └── README.md                #   脚本说明
 ├── run.py                       # 启动入口
-└── scripts/                     # 辅助脚本
+└── README.md
 ```
 
 ---
@@ -52,29 +58,35 @@ ai-trading-assistant/
 - Node.js **18+**（仅构建前端时需要）
 - macOS / Linux
 
-### 1. 克隆项目
+### 一键搭建
 
 ```bash
 git clone git@github.com:albertma/ai-trading-assistant.git
 cd ai-trading-assistant
+bash scripts/setup.sh
 ```
 
-### 2. 安装 Python 依赖
+`setup.sh` 会自动完成：Python 依赖安装 → 前端构建 → 数据目录创建 → 环境验证。
+
+### 分步搭建
+
+#### 1. 安装 Python 依赖
 
 ```bash
-pip install -r requirements.txt
+pip install -r scripts/requirements.txt
 ```
 
-如果项目没有 `requirements.txt`，手动安装核心依赖：
+核心依赖一览：
 
-```bash
-pip install fastapi uvicorn[standard] pandas numpy requests httpx akshare
-```
+| 包 | 用途 |
+|---|---|
+| `fastapi` + `uvicorn` | Web 框架 |
+| `pandas` + `numpy` | 数据处理、形态识别 |
+| `akshare` | A 股数据源 |
+| `openai` | AI 预测/聊天 |
+| `requests`、`beautifulsoup4` | 数据采集 |
 
-> **akshare** 是 A 股数据源核心依赖，建议安装最新版：
-> `pip install akshare --upgrade`
-
-### 3. 构建前端
+#### 2. 构建前端
 
 ```bash
 cd frontend
@@ -85,9 +97,9 @@ cd ..
 
 前端为 Vue3 + Element Plus + ECharts，构建产物输出到 `frontend/dist/`。
 
-### 4. 准备数据目录
+#### 3. 准备数据目录
 
-项目运行时需要在 `~/Jarvis/` 下存放数据，目录结构：
+项目运行时需要在 `~/Jarvis/` 下存放数据：
 
 ```
 ~/Jarvis/
@@ -106,7 +118,7 @@ cd ..
 - 编码：UTF-16
 - 分隔符：Tab
 
-### 5. 启动服务
+#### 4. 启动服务
 
 ```bash
 python3 run.py
@@ -129,8 +141,10 @@ python3 run.py
 - 组合分析（集中度、行业分布）
 
 ### 🔍 个股深度分析
-- **技术面**：均线系统、MACD、RSI、K线形态识别（17种经典形态 + 杯柄形态）
-- **量价分析**：量价齐升、放量突破、天量天价、地量地价、堆量上涨等10种高级模式
+- **技术面**：均线系统（MA5/10/20/30/60/200）、MACD、RSI、K线形态识别
+- **K线形态**：17种经典形态（大阳线、吞没、孕线、十字星等）
+- **量价模式**：10种高级模式（量价齐升、放量突破、天量天价、地量地价、堆量上涨、缩量止跌等）
+- **杯柄形态**：支持量价配合分析（柄部缩量、突破放量、杯底缩量）
 - **基本面**：杜邦分析、财务报告、行业对比、供应链分析
 - **估值**：PE/PB 分位、历史对比
 - **AI 预测**：基于技术指标的趋势判断
@@ -141,8 +155,8 @@ python3 run.py
 - 持仓风险预警
 
 ### 🧠 思维模型训练
-- 22个投资思维模型（均值回归、反脆弱、涌现等）
-- 每日 AI 出题 + 结合行情
+- 22个投资思维模型（均值回归、反脆弱、涌现、黑天鹅等）
+- 每日 AI 出题 + 结合今日行情
 - 用户预测 → 次日自动反思评分
 
 ### 📝 复盘报告
@@ -189,6 +203,19 @@ akshare / CSV 文件
 | 板块数据 | 本地 CSV | 行业分类 |
 | 美股/加密货币 | akshare / yfinance | 可选 |
 
+### 数据拉取
+
+```bash
+# 拉取今日收盘数据
+bash scripts/fetch_data.sh
+
+# 指定日期
+bash scripts/fetch_data.sh --date 2026-05-15
+
+# 盘中快照
+bash scripts/fetch_data.sh --suffix noon
+```
+
 ---
 
 ## 🕐 定时任务
@@ -202,13 +229,11 @@ akshare / CSV 文件
 | 20:00 | 双保险 | 补拉当天数据 |
 | 20:30 | 复盘日报 | 自动生成当日复盘 |
 
-> cron 脚本在 `~/Jarvis/fetch_a_stock_data.py`
-
 ---
 
 ## 📌 注意
 
-- A 股 CS V 文件编码为 **UTF-16**，分隔符为 **Tab**
+- A 股 CSV 文件编码为 **UTF-16**，分隔符为 **Tab**
 - 数据库路径：`~/Jarvis/ai_trading/stock_archive.db`
 - 所有时间基于北京时间（Asia/Shanghai）
 - 前端是预编译 SPA，修改 `.vue` 后需执行 `npm run build`

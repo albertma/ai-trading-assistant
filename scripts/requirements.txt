@@ -1,0 +1,24 @@
+# AI 投研助手 — Python 依赖
+# 安装: pip install -r requirements.txt
+
+# --- Web 框架 ---
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.0.0
+
+# --- 数据处理 ---
+pandas>=2.0.0
+numpy>=1.24.0
+
+# --- 数据源 ---
+akshare>=1.14.0
+requests>=2.30.0
+
+# --- AI ---
+openai>=1.0.0
+
+# --- 工具 ---
+pyyaml>=6.0
+beautifulsoup4>=4.12.0
+aiofiles>=23.0.0
+lxml>=5.0.0
