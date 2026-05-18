@@ -82,6 +82,10 @@
                         <span>🧠 每日模型训练</span>
                     </el-menu-item>
                 </el-sub-menu>
+                <el-menu-item index="/cron-history">
+                    <el-icon><Timer /></el-icon>
+                    <span>Cron任务</span>
+                </el-menu-item>
             </el-menu>
         </el-aside>
 

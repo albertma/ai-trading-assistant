@@ -277,6 +277,17 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_tl_code ON trade_logs(code);
+        CREATE TABLE IF NOT EXISTS cron_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_name TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            status TEXT NOT NULL DEFAULT 'running',
+            message TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_cron_task ON cron_history(task_name);
+        CREATE INDEX IF NOT EXISTS idx_cron_started ON cron_history(started_at);
     """)
     conn.commit()
     # 迁移：已有数据库加 snapshot_notes 列
@@ -297,6 +308,51 @@ def init_db():
     except Exception:
         pass
     conn.close()
+
+# ═══════════════════════════════════════════════════════════
+# Cron 任务历史记录
+# ═══════════════════════════════════════════════════════════
+
+def add_cron_log(task_name: str, status: str = "running", message: str = "") -> int:
+    """记录cron任务运行日志"""
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO cron_history (task_name, started_at, status, message) VALUES (?, datetime('now','localtime'), ?, ?)",
+        (task_name, status, message)
+    )
+    conn.commit()
+    log_id = cur.lastrowid
+    conn.close()
+    return log_id
+
+
+def update_cron_log(log_id: int, status: str, message: str = ""):
+    """更新cron任务完成状态"""
+    conn = get_db()
+    conn.execute(
+        "UPDATE cron_history SET status = ?, message = ?, finished_at = datetime('now','localtime') WHERE id = ?",
+        (status, message, log_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_cron_history(limit: int = 50, task_name: str = None) -> list[dict]:
+    """获取cron任务历史"""
+    conn = get_db()
+    if task_name:
+        rows = conn.execute(
+            "SELECT * FROM cron_history WHERE task_name = ? ORDER BY id DESC LIMIT ?",
+            (task_name, limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM cron_history ORDER BY id DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
 
 def save_analysis(code: str, name: str, sector: str, data: dict) -> bool:
     """保存/更新分析记录（含全量JSON）"""

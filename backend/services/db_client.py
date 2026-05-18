@@ -46,6 +46,9 @@ from backend.services.database.stock_db import (
     # 个股信息
     search_stock_info, get_stock_info, get_stock_info_count,
     refresh_stock_info_from_csv, refresh_stock_detail_from_akshare,
+
+    # Cron历史
+    add_cron_log, update_cron_log, get_cron_history,
 )
 
 

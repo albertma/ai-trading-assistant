@@ -12,6 +12,7 @@ import ChainManager from '../views/ChainManager.vue'
 import KnowledgeGraph from '../views/KnowledgeGraph.vue'
 import MentalModels from '../views/MentalModels.vue'
 import SectorAnalysis from '../views/SectorAnalysis.vue'
+import CronHistory from '../views/CronHistory.vue'
 
 const routes = [
     { path: '/', name: 'Dashboard', component: Dashboard, meta: { title: '市场概览', icon: 'DataAnalysis' } },
@@ -27,6 +28,7 @@ const routes = [
     { path: '/knowledge-graph', name: 'KnowledgeGraph', component: KnowledgeGraph, meta: { title: '知识库', icon: 'Cpu' } },
     { path: '/mental-models', name: 'MentalModels', component: MentalModels, meta: { title: '模型库', icon: 'Platform' } },
     { path: '/mental-training', name: 'MentalTraining', component: () => import('../views/MentalTraining.vue'), meta: { title: '每日模型训练', icon: 'TrendCharts' } },
+    { path: '/cron-history', name: 'CronHistory', component: CronHistory, meta: { title: 'Cron任务', icon: 'Timer' } },
 ]
 
 const router = createRouter({
