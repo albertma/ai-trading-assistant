@@ -76,6 +76,14 @@
                         <span v-else style="font-size:12px;color:#e6a23c;">进行中</span>
                     </template>
                 </el-table-column>
+                <el-table-column label="操作" width="70" align="center">
+                    <template #default="{ row }">
+                        <el-button v-if="row.status === 'failed'" size="small" type="danger"
+                            @click.stop="retryJob(row)" plain :disabled="retryingId === row.id">
+                            {{ retryingId === row.id ? '...' : '🔁 重试' }}
+                        </el-button>
+                    </template>
+                </el-table-column>
             </el-table>
             <div v-if="!records.length && !loading" style="text-align:center;padding:30px;color:#909399;">
                 <p>暂无 cron 任务记录</p>
@@ -96,6 +104,7 @@ const records = ref([])
 const taskList = ref([])
 const loading = ref(false)
 const filterTask = ref('')
+const retryingId = ref(null)
 
 const stats = computed(() => {
     const r = records.value
@@ -149,6 +158,22 @@ function showDetail(row) {
             { dangerouslyUseHTMLString: true, customStyle: { maxWidth: '600px' } }
         )
     }
+
+function retryJob(row) {
+    retryingId.value = row.id
+    axios.post(`${API_BASE}/cron-jobs/${encodeURIComponent(row.task_name)}/run`).then(({ data }) => {
+        if (data.status === 'success') {
+            ElMessageBox.alert(data.message || '执行成功', '✅ 重试结果', { type: 'success' })
+        } else {
+            ElMessageBox.alert(data.message || '执行失败', '❌ 重试结果', { type: 'error' })
+        }
+    }).catch(e => {
+        ElMessageBox.alert('请求失败: ' + (e.response?.data?.detail || e.message), '❌ 错误', { type: 'error' })
+    }).finally(() => {
+        retryingId.value = null
+        loadData()
+    })
+}
 
 function calcDuration(start, end) {
     if (!start || !end) return '--'
