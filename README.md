@@ -46,6 +46,8 @@
 
 ![Cron任务](screenshots/cron-history.png)
 
+---
+
 ## 技术栈
 
 - **后端**: Python FastAPI + SQLite
@@ -53,12 +55,103 @@
 - **数据**: akshare（东方财富接口）
 - **AI**: DeepSeek API（动态摘要生成）
 
-## 启动
+---
+
+## 快速启动
+
+### 前提条件
+
+- Python 3.10+
+- Node.js 18+
+- SQLite 3
+
+### 方式一：一键初始化
 
 ```bash
-cd frontend && npm run build
+# 克隆/进入项目
+cd ai-trading-assistant
+
+# 运行初始化脚本
+bash setup/setup.sh
+```
+
+### 方式二：手动初始化
+
+#### 1. 安装依赖
+
+```bash
+# Python 依赖
+pip3 install fastapi uvicorn akshare pandas numpy openai pyyaml
+
+# 前端依赖
+cd frontend
+npm install
+npm run build
 cd ..
+```
+
+#### 2. 初始化数据库
+
+数据库位置：`~/Jarvis/ai_trading/stock_archive.db`
+
+```bash
+# 创建数据目录
+mkdir -p ~/Jarvis/ai_trading
+mkdir -p ~/Jarvis/A股行情信息
+mkdir -p ~/Jarvis/复盘
+
+# 创建表结构并导入种子数据（12371只A股基本信息 + 风控规则 + 思维模型）
+sqlite3 ~/Jarvis/ai_trading/stock_archive.db < setup/seed.sql
+```
+
+> **seed.sql 包含：**
+> - 全部 22 张表的结构定义（CREATE TABLE）
+> - 12371 条个股基本信息（代码、名称、市场、行业、总市值等）
+> - 16 条默认风控规则
+> - 22 条思维模型数据
+> - 130 条产业链关系数据
+
+#### 3. 配置行情数据
+
+系统运行时自动从东方财富（akshare）下载每日行情CSV。如需离线运行，可将历史CSV放入：
+
+```
+~/Jarvis/A股行情信息/沪深京A股YYYY-MM-DD.csv
+```
+
+#### 4. 启动服务
+
+```bash
 python3 run.py
 ```
 
-访问 http://localhost:8080
+访问 [http://localhost:8080](http://localhost:8080)
+
+---
+
+## 项目结构
+
+```
+ai-trading-assistant/
+├── backend/               # Python 后端
+│   ├── main.py           # FastAPI 入口 + 静态文件
+│   ├── config.py         # 配置（HOST/PORT）
+│   ├── routers/          # API 路由
+│   │   ├── market.py     # 市场概览
+│   │   ├── analysis.py   # 个股分析
+│   │   ├── mental_models.py   # 板块周期 + 思维模型
+│   │   └── ...
+│   └── services/         # 业务逻辑
+│       ├── database/     # 数据库 + init_db()
+│       ├── tradingmgt/   # 持仓管理
+│       └── external/     # akshare 封装
+├── frontend/             # Vue 3 前端
+│   ├── src/
+│   │   └── views/        # 页面组件
+│   └── dist/             # 构建产物
+├── setup/                # 初始化脚本
+│   ├── setup.sh          # 一键初始化
+│   └── seed.sql          # 数据库种子文件
+├── screenshots/          # 功能预览截图
+└── run.py                # 启动入口
+```
