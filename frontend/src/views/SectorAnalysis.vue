@@ -6,6 +6,9 @@
                 <div class="card-header">
                     <b>📊 板块周期研判</b>
                     <div style="display:flex;align-items:center;gap:8px;">
+                        <el-input v-model="stockQuery" placeholder="🔍 输入个股代码/名称" size="small"
+                            style="width:180px;" clearable @keyup.enter="searchStock"
+                            :suffix-icon="SearchIcon" />
                         <el-date-picker v-model="selectedDate" type="date" placeholder="选择日期"
                             size="small" style="width:160px;" value-format="YYYY-MM-DD"
                             :disabled-date="disabledDate" @change="onDateChange"
@@ -77,7 +80,13 @@
                 <div class="themes-grid">
                     <div v-for="theme in summary.themes" :key="theme.name" class="theme-card">
                         <div class="theme-name">{{ theme.name }}</div>
-                        <div class="theme-sectors">{{ theme.sectors.join(' · ') }}</div>
+                        <div class="theme-sectors">
+                            <el-tag v-for="sector in theme.sectors" :key="sector"
+                                size="small" effect="plain" style="cursor:pointer;margin:2px;"
+                                @click.stop="showSectorDetailByName(sector)">
+                                {{ sector }}
+                            </el-tag>
+                        </div>
                         <div class="theme-summary">{{ theme.summary }}</div>
                     </div>
                 </div>
@@ -96,6 +105,23 @@
             </div>
         </el-card>
 
+        <!-- 📌 当前个股信息 -->
+        <el-card v-if="stockInfo" class="stock-banner" style="margin-top:12px;">
+            <div class="stock-banner-inner">
+                <span style="font-weight:bold;">📌 当前个股：</span>
+                <span style="font-size:15px;font-weight:700;color:#303133;">{{ stockInfo.name }}({{ stockInfo.code }})</span>
+                <el-tag type="info" effect="plain" size="small" style="margin-left:8px;">
+                    {{ stockInfo.sector || '未分类' }}
+                </el-tag>
+                <el-tag v-if="stockInfo.theme" type="warning" effect="dark" size="small" style="margin-left:4px;color:#fff;">
+                    🔗 {{ stockInfo.theme }}
+                </el-tag>
+                <el-button size="small" text @click="clearStock" style="margin-left:auto;color:#909399;">
+                    ✕ 清除
+                </el-button>
+            </div>
+        </el-card>
+
         <!-- ═══ 板块详情列表（Tabs：周期相位 / 指数走势） ═══ -->
         <el-card style="margin-top:16px;">
             <el-tabs v-model="detailTab" @tab-click="onTabChange">
@@ -110,7 +136,8 @@
                         </el-select>
                         <el-input v-model="searchQuery" placeholder="搜索板块" size="small" style="width:180px;" clearable />
                     </div>
-                    <el-table :data="filteredSectors" border size="small" style="width:100%;" v-if="sectors.length" @row-click="showSectorDetail">
+                    <el-table :data="filteredSectors" border size="small" style="width:100%;" v-if="sectors.length" @row-click="showSectorDetail"
+                        :row-class-name="sectorRowClass">
                         <el-table-column label="周期" width="100">
                             <template #default="{ row }">
                                 <span :style="{ fontSize: '16px' }">{{ row.icon }}</span>
@@ -273,9 +300,13 @@
 import { ref, computed, onMounted, nextTick, watch, onUnmounted } from 'vue'
 import axios from 'axios'
 import * as echarts from 'echarts'
+import { Search as SearchIcon } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
 const API_BASE = '/api/v1/mental'
 
+// API base for stock sector lookup (uses /api/v1 prefix)
+const API_BASE_V1 = '/api/v1'
 
 const sectors = ref([])
 const summary = ref(null)
@@ -285,6 +316,11 @@ const phaseFilter = ref('')
 const searchQuery = ref('')
 const selectedDate = ref('')
 const availableDates = ref([])
+
+// Stock search state
+const stockQuery = ref('')
+const stockInfo = ref(null)
+const stockHighlight = ref('')  // sector name to highlight
 
 // Detail dialog (unified: timeline + stocks tabs)
 const detailVisible = ref(false)
@@ -366,6 +402,49 @@ async function loadData(targetDate) {
 
 async function refreshData() {
     await loadData()
+}
+
+// ── 个股搜索 ──
+async function searchStock() {
+    const q = stockQuery.value.trim()
+    if (!q) return
+    try {
+        const { data } = await axios.get(`${API_BASE}/stock-sector`, { params: { code: q, date: selectedDate.value } })
+        if (data.error) {
+            stockInfo.value = null
+            stockHighlight.value = ''
+            ElMessage.warning(data.error)
+            return
+        }
+        stockInfo.value = data
+        stockHighlight.value = data.sector || ''
+        // 高亮后滚动到对应行
+        await nextTick()
+        // 切换到相位tab
+        detailTab.value = 'phases'
+        // 搜索板块列表
+        if (data.sector) {
+            searchQuery.value = data.sector
+        }
+    } catch {
+        stockInfo.value = null
+        stockHighlight.value = ''
+        ElMessage.error('查询失败，请检查股票代码')
+    }
+}
+
+function clearStock() {
+    stockInfo.value = null
+    stockHighlight.value = ''
+    stockQuery.value = ''
+    searchQuery.value = ''
+}
+
+function sectorRowClass({ row }) {
+    if (stockHighlight.value && row.sector === stockHighlight.value) {
+        return 'highlight-row'
+    }
+    return ''
 }
 
 function getPhaseColor(phase) {
@@ -656,7 +735,7 @@ watch(indexChartRef, () => {
     border: 1px solid #e8e0f0;
 }
 .theme-name { font-size: 14px; font-weight: 600; color: #303133; margin-bottom: 2px; }
-.theme-sectors { font-size: 11px; color: #409eff; margin-bottom: 4px; }
+.theme-sectors { font-size: 11px; color: #409eff; margin-bottom: 4px; display: flex; flex-wrap: wrap; gap: 2px; }
 .theme-summary { font-size: 12px; color: #606266; line-height: 1.5; }
 
 /* ⑥ 风险提示 */
@@ -704,4 +783,21 @@ watch(indexChartRef, () => {
 .tl-date { font-size: 12px; color: #909399; }
 .tl-stats { display: flex; gap: 16px; font-size: 12px; color: #606266; margin-bottom: 4px; }
 .tl-desc { font-size: 12px; color: #909399; }
+
+/* 📌 个股搜索横幅 */
+.stock-banner { border-left: 3px solid #e6a23c; }
+.stock-banner-inner {
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+}
+
+/* 高亮行 */
+:deep(.highlight-row) {
+    background-color: #fdf6ec !important;
+}
+:deep(.highlight-row:hover > td) {
+    background-color: #fdf0d5 !important;
+}
+:deep(.highlight-row td) {
+    background-color: #fdf6ec;
+}
 </style>

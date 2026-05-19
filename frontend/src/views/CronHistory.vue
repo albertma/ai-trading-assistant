@@ -14,6 +14,39 @@
             </div>
         </div>
 
+        <!-- Cron 任务面板（手动触发） -->
+        <el-card shadow="hover" style="margin-bottom:16px;">
+            <template #header>
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <b>⚡ 手动触发 Cron 任务</b>
+                    <el-button size="small" text @click="loadCronJobs">🔄 刷新</el-button>
+                </div>
+            </template>
+            <el-row :gutter="12">
+                <el-col :span="6" v-for="job in cronJobs" :key="job.name">
+                    <el-card shadow="never" class="cron-task-card"
+                        :style="{ borderLeft: runningJob === job.name ? '3px solid #e6a23c' : '3px solid #409eff' }">
+                        <div style="font-size:24px;text-align:center;">{{ job.icon }}</div>
+                        <div style="font-weight:bold;font-size:14px;text-align:center;margin:6px 0 2px;">{{ job.name }}</div>
+                        <div style="font-size:11px;color:#909399;text-align:center;margin-bottom:8px;min-height:32px;">{{ job.description }}</div>
+                        <div style="text-align:center;">
+                            <el-button size="small" :type="job.name === '复盘日报' ? 'warning' : 'primary'"
+                                @click="runCronJob(job)" plain :loading="runningJob === job.name"
+                                :disabled="!!runningJob" style="width:100%;">
+                                {{ runningJob === job.name ? '执行中...' : '▶ 执行' }}
+                            </el-button>
+                        </div>
+                        <!-- 复盘日报额外显示最新报告日期 -->
+                        <div v-if="job.name === '复盘日报' && reportStatus" style="margin-top:6px;text-align:center;">
+                            <el-tag :type="reportStatus.exists ? 'success' : 'warning'" size="mini" effect="plain" style="width:100%;">
+                                {{ reportStatus.exists ? '✅ 今日已生成' : '📋 最新: ' + reportStatus.date }}
+                            </el-tag>
+                        </div>
+                    </el-card>
+                </el-col>
+            </el-row>
+        </el-card>
+
         <!-- 统计卡片 -->
         <el-row :gutter="16" style="margin-bottom:16px;">
             <el-col :span="6">
@@ -76,12 +109,18 @@
                         <span v-else style="font-size:12px;color:#e6a23c;">进行中</span>
                     </template>
                 </el-table-column>
-                <el-table-column label="操作" width="70" align="center">
+                <el-table-column label="操作" width="130" align="center">
                     <template #default="{ row }">
-                        <el-button v-if="row.status === 'failed'" size="small" type="danger"
-                            @click.stop="retryJob(row)" plain :disabled="retryingId === row.id">
-                            {{ retryingId === row.id ? '...' : '🔁 重试' }}
-                        </el-button>
+                        <div style="display:flex;gap:4px;justify-content:center;">
+                            <el-button v-if="row.status === 'failed'" size="small" type="danger"
+                                @click.stop="retryJob(row)" plain :disabled="retryingId === row.id"
+                                style="padding:4px 8px;font-size:12px;">
+                                {{ retryingId === row.id ? '...' : '🔁' }}
+                            </el-button>
+                            <el-button size="small" type="info"
+                                @click.stop="deleteJob(row)" plain
+                                style="padding:4px 8px;font-size:12px;">🗑️</el-button>
+                        </div>
                     </template>
                 </el-table-column>
             </el-table>
@@ -97,6 +136,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import axios from 'axios'
+import { getReportLatest } from '../api/index.js'
 
 const API_BASE = '/api/v1'
 
@@ -105,6 +145,9 @@ const taskList = ref([])
 const loading = ref(false)
 const filterTask = ref('')
 const retryingId = ref(null)
+const reportStatus = ref(null)
+const cronJobs = ref([])
+const runningJob = ref('')
 
 const stats = computed(() => {
     const r = records.value
@@ -118,8 +161,38 @@ const stats = computed(() => {
 
 onMounted(async () => {
     await loadTasks()
-    await loadData()
+    await loadCronJobs()
+    await Promise.all([loadData(), loadReportStatus()])
 })
+
+async function loadCronJobs() {
+    try {
+        const { data } = await axios.get(`${API_BASE}/cron-jobs`)
+        cronJobs.value = data.jobs || []
+    } catch { /* ignore */ }
+}
+
+async function loadReportStatus() {
+    try {
+        const { data } = await getReportLatest()
+        reportStatus.value = data
+    } catch { /* ignore */ }
+}
+
+async function runCronJob(job) {
+    runningJob.value = job.name
+    try {
+        const { data } = await axios.post(`${API_BASE}/cron-jobs/${encodeURIComponent(job.name)}/run`)
+        await Promise.all([loadCronJobs(), loadReportStatus(), loadData()])
+        ElMessageBox.alert(data.message || '执行完毕', data.status === 'success' ? `✅ ${job.name} 成功` : `❌ ${job.name} 失败`, {
+            type: data.status === 'success' ? 'success' : 'error',
+        })
+    } catch (e) {
+        ElMessageBox.alert('请求失败: ' + (e.response?.data?.detail || e.message), '❌ 错误', { type: 'error' })
+    } finally {
+        runningJob.value = ''
+    }
+}
 
 async function loadTasks() {
     try {
@@ -135,6 +208,8 @@ async function loadData() {
         if (filterTask.value) params.task_name = filterTask.value
         const { data } = await axios.get(`${API_BASE}/cron-history`, { params })
         records.value = data.records || []
+        // 刷新时也更新报告状态
+        await loadReportStatus()
     } catch (e) {
         console.error('加载Cron历史失败', e)
     } finally {
@@ -175,6 +250,16 @@ function retryJob(row) {
     })
 }
 
+async function deleteJob(row) {
+    try {
+        await ElMessageBox.confirm(`确定删除 #${row.id} ${row.task_name} 的记录？`, '确认删除', {
+            type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
+        })
+        await axios.delete(`${API_BASE}/cron-history/${row.id}`)
+        await loadData()
+    } catch { /* 取消对话框不操作 */ }
+}
+
 function calcDuration(start, end) {
     if (!start || !end) return '--'
     const s = new Date(start.replace('T', ' ').replace(/-/g, '/')).getTime()
@@ -199,4 +284,6 @@ function calcDuration(start, end) {
 .msg-text { font-size: 12px; color: #606266; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; max-width: 300px; }
 .clickable-row { cursor: pointer; }
 .clickable-row:hover td { background-color: #f5f7fa; }
+.cron-task-card { border-radius: 8px; padding: 8px 4px; transition: transform 0.15s; }
+.cron-task-card:hover { transform: translateY(-2px); }
 </style>

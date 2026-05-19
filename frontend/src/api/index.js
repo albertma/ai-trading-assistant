@@ -223,6 +223,10 @@ export function getReportList() {
     return api.get('/reports/list')
 }
 
+export function getReportLatest() {
+    return api.get('/reports/latest')
+}
+
 export function saveDailyNote(date, note) {
     return api.put(`/reports/notes/${date}`, { note })
 }

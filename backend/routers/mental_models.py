@@ -11,6 +11,9 @@ import pandas as pd
 from backend.services.db_client import get_db, DB_PATH
 from backend.config import MARKET_DATA_DIR
 from backend.routers.market import _load_csv
+from openai import OpenAI
+import yaml
+from pathlib import Path
 
 router = APIRouter()
 
@@ -994,7 +997,7 @@ def get_sector_cycle_history(
 
     conn = get_db()
     rows = conn.execute(
-        "SELECT * FROM sector_dispersion WHERE sector = ? AND date >= ? AND date <= ? ORDER BY date",
+        "SELECT * FROM sector_dispersion WHERE sector = ? AND date >= ? AND date <= ? ORDER BY date DESC",
         (sector, start_date, end_date)
     ).fetchall()
     conn.close()
@@ -1092,6 +1095,80 @@ def _classify_sector_phase(avg_change, dispersion, up_pct, prev_avg=None):
     # 震荡⚖️：无明显方向（兜底）
     return ("震荡⚖️", "⚖️", "#909399",
             f"板块震荡整理，涨跌{avg_change:+.2f}%，上涨占比{up_pct:.0f}%，离散度{dispersion}")
+
+
+
+# ═══════════════════════════════════════════════════════════
+# 主题主线定义（8条主线，每条包含若干细分行业）
+# ═══════════════════════════════════════════════════════════
+THEME_DEFINITIONS = [
+    {
+        "name": "科技线",
+        "sectors": ["半导体", "软件开发", "IT服务Ⅱ", "消费电子", "计算机设备",
+                    "游戏Ⅱ", "通信设备", "通信服务", "计算机应用", "云服务"],
+        "description": "AI算力、软件、半导体等科技成长方向",
+    },
+    {
+        "name": "有色资源线",
+        "sectors": ["贵金属", "小金属", "工业金属", "能源金属", "金属新材料",
+                    "焦炭Ⅱ", "冶钢原料", "化学原料"],
+        "description": "有色金属、贵金属及上游原材料",
+    },
+    {
+        "name": "地产基建线",
+        "sectors": ["房地产开发", "基础建设", "装修建材", "工程机械", "装修装饰Ⅱ",
+                    "水泥", "玻璃玻纤", "房屋建设Ⅱ"],
+        "description": "房地产、基建、建材链",
+    },
+    {
+        "name": "新能源线",
+        "sectors": ["光伏设备", "电池", "电网设备", "风电设备", "储能",
+                    "其他电源设备Ⅱ", "环保设备Ⅱ", "综合环境治理"],
+        "description": "光伏、风电、锂电池、储能等新能源产业链",
+    },
+    {
+        "name": "医药生物线",
+        "sectors": ["化学制药", "中药Ⅱ", "生物制品", "医疗器械", "医疗服务",
+                    "医药商业", "医药研发外包"],
+        "description": "创新药、中药、医疗器械等大健康方向",
+    },
+    {
+        "name": "消费线",
+        "sectors": ["白酒Ⅱ", "食品加工", "家电零部件Ⅱ", "调味发酵品Ⅱ", "饮料乳品",
+                    "服装家纺", "美容护理", "互联网电商", "专业连锁Ⅱ"],
+        "description": "食品饮料、家电、服饰等大消费",
+    },
+    {
+        "name": "军工线",
+        "sectors": ["航天装备Ⅱ", "航空装备Ⅱ", "地面装备Ⅱ", "军工电子Ⅱ",
+                    "航海装备Ⅱ", "军工信息化"],
+        "description": "航空航天、国防装备",
+    },
+    {
+        "name": "汽车线",
+        "sectors": ["汽车零部件", "乘用车", "商用车", "汽车服务",
+                    "摩托车及其他", "汽车电子"],
+        "description": "整车、零部件、汽车后市场产业链",
+    },
+]
+
+
+def _get_deepseek_client():
+    """复用已有 DeepSeek API 客户端"""
+    config_path = Path.home() / ".hermes" / "config.yaml"
+    try:
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        providers = cfg.get("custom_providers", [])
+        for p in providers:
+            if p.get("name") == "deepseek-v4-flash":
+                return OpenAI(api_key=p["api_key"], base_url=p["base_url"])
+        return OpenAI(
+            api_key=cfg.get("model", {}).get("api_key", ""),
+            base_url=cfg.get("model", {}).get("base_url", "https://api.deepseek.com"),
+        )
+    except Exception:
+        return OpenAI(api_key="", base_url="https://api.deepseek.com")
 
 
 def _summarize_cycles(sectors: list) -> dict:
@@ -1303,42 +1380,88 @@ def _summarize_cycles(sectors: list) -> dict:
     if not warnings:
         warnings.append({"level": "info", "msg": "市场结构健康，暂无显著风险信号"})
 
-    # ── 6. 主题主线 ──
+    # ── 6. 主题主线（8条线 + AI动态摘要） ──
     themes = []
-    # 检查科技线
-    tech_sectors = ["半导体", "软件开发", "IT服务Ⅱ", "消费电子", "计算机设备", "游戏Ⅱ", "通信设备", "通信服务"]
-    tech_in_phase = []
-    for s in sectors:
-        if s["sector"] in tech_sectors:
-            tech_in_phase.append((s["sector"], s["phase"], s["avg_change"]))
-    if tech_in_phase:
-        phase_summary = ", ".join(f"{n}{p}" for n, p, _ in tech_in_phase)
-        avg_up = sum(x[2] for x in tech_in_phase) / len(tech_in_phase)
+    theme_data_for_ai = []
+
+    for td in THEME_DEFINITIONS:
+        matched = [s for s in sectors if s["sector"] in td["sectors"]]
+        if len(matched) < 2:
+            continue  # 至少2个行业有数据才构成主线
+
+        avg_up = sum(s["avg_change"] for s in matched) / len(matched)
+        phases_here = [s["phase"] for s in matched]
+        fallback_summary = f"{td['name']}板块平均涨幅{avg_up:+.2f}%，涉及{len(matched)}个细分行业，多数处于{'/'.join(sorted(set(phases_here))[:3])}阶段"
+
         themes.append({
-            "name": "科技线",
-            "sectors": [n for n, _, _ in tech_in_phase if "软件" in n or "半导体" in n or "IT" in n][:5],
-            "summary": f"科技板块平均涨幅{avg_up:+.2f}%，整体偏强但内部分化（半导体σ4.8、IT服务σ4.7），龙头已涨等待后排跟进",
+            "name": td["name"],
+            "sectors": [s["sector"] for s in matched],
+            "summary": fallback_summary,
+            "_matched": matched,
         })
-    # 检查有色资源线
-    resource_sectors = ["贵金属", "小金属", "工业金属", "能源金属", "金属新材料"]
-    resource_in_phase = [(s["sector"], s["phase"], s["avg_change"]) for s in sectors if s["sector"] in resource_sectors]
-    if resource_in_phase:
-        avg_up = sum(x[2] for x in resource_in_phase) / len(resource_in_phase)
-        themes.append({
-            "name": "有色资源线",
-            "sectors": [n for n, _, _ in resource_in_phase],
-            "summary": f"有色系整体强势，平均涨幅{avg_up:+.2f}%。贵金属/小金属近高潮，关注资金是否溢出至工业金属",
+
+        sector_lines = []
+        for s in matched:
+            sector_lines.append(
+                f"  {s['sector']}: 平均涨幅{s['avg_change']:+.2f}%, "
+                f"上涨占比{s['up_pct']:.0f}%, 个股{s['stock_count']}只, "
+                f"离散度{s['dispersion']:.1f}, 日最大涨{s['max_change']:+.2f}%, "
+                f"日最大跌{s['min_change']:+.2f}%, 周期'{s.get('phase','未知')}'"
+            )
+        theme_data_for_ai.append({
+            "name": td["name"],
+            "description": td["description"],
+            "sectors": "\n".join(sector_lines),
         })
-    # 检查地产链
-    estate_sectors = ["房地产开发", "基础建设", "装修建材", "工程机械", "装修装饰Ⅱ"]
-    estate_in_phase = [(s["sector"], s["phase"], s["avg_change"]) for s in sectors if s["sector"] in estate_sectors]
-    if estate_in_phase:
-        avg_up = sum(x[2] for x in estate_in_phase) / len(estate_in_phase)
-        themes.append({
-            "name": "地产基建线",
-            "sectors": [n for n, _, _ in estate_in_phase],
-            "summary": f"地产链整体蓄势中，平均涨幅{avg_up:+.2f}%。房地产开发在酝酿中偏强，若明日放量可能带动全线",
-        })
+
+    # AI 生成动态摘要（单次调用，优化速度）
+    if theme_data_for_ai:
+        try:
+            prompt_parts = [
+                "你是一位A股板块轮动分析师。以下是今日各主题线的细分行业数据。",
+                "请为每条有数据的主题线写一段1-2句的行情判断摘要（50-80字），",
+                "分析要点：涨跌强弱、资金共识度、个股内部分化、趋势阶段。",
+                "如果是蓄势阶段就提示关注，高潮阶段提示谨慎，冰点阶段提示超跌机会。",
+                "",
+                '返回 JSON 格式：{"科技线":"摘要内容", "有色资源线":"摘要内容"}',
+                "只返回 JSON，不要其他文字。没有数据的线不要出现在JSON里。",
+                "",
+            ]
+            for td in theme_data_for_ai:
+                prompt_parts.append(f"--- {td['name']}（{td['description']}） ---")
+                prompt_parts.append(td["sectors"])
+                prompt_parts.append("")
+
+            prompt = "\n".join(prompt_parts)
+
+            ai_client = _get_deepseek_client()
+            resp = ai_client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": "你是一位A股板块轮动分析师。返回严格JSON。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+                max_tokens=1500,
+                timeout=30,
+            )
+            raw = resp.choices[0].message.content.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            ai_summaries = json.loads(raw.strip())
+
+            for theme in themes:
+                name = theme["name"]
+                if name in ai_summaries:
+                    theme["summary"] = ai_summaries[name]
+        except Exception:
+            pass  # AI失败则使用备用摘要
+
+    # 清理临时字段
+    for theme in themes:
+        theme.pop("_matched", None)
 
     return {
         "phase_distribution": phases,
@@ -1573,4 +1696,46 @@ def auto_reflect_all():
         "date": today, "yesterday": yesterday, "reflected": reflected_count,
         "market_summary": market_summary, "results": results,
         "message": f"已对 {reflected_count} 条昨日训练记录完成自动反思",
+    }
+
+
+@router.get("/stock-sector")
+def get_stock_sector(code: str = Query(...), date_str: str = Query(None, alias="date")):
+    """查询个股所属行业板块及主题线"""
+    from backend.routers.market import _load_csv
+
+    df = _load_csv(date_str, "close")
+    if df is None:
+        date_str = date_str or date.today().isoformat()
+        # 尝试午盘
+        df = _load_csv(date_str, "noon")
+    if df is None:
+        return {"error": "无可用行情数据"}, 404
+
+    if "code" not in df.columns:
+        return {"error": "数据格式错误"}, 500
+
+    # 查找股票
+    match = df[df["code"].astype(str).str.strip() == str(code).strip()]
+    if match.empty:
+        match = df[df["code"].astype(str).str.strip().str.zfill(6) == str(code).strip().zfill(6)]
+    if match.empty:
+        return {"error": f"未找到代码 {code}"}, 404
+
+    row = match.iloc[0]
+    sector = str(row.get("sector", "") or "")
+    name = str(row.get("name", "") or "")
+
+    # 查主题线
+    theme = ""
+    for td in THEME_DEFINITIONS:
+        if sector in td["sectors"]:
+            theme = td["name"]
+            break
+
+    return {
+        "code": str(code).strip().zfill(6),
+        "name": name,
+        "sector": sector,
+        "theme": theme,
     }

@@ -5,7 +5,7 @@ import os
 from datetime import date
 from pathlib import Path
 from fastapi import APIRouter, Query, HTTPException
-from backend.services.db_client import add_cron_log, update_cron_log, get_cron_history as _get_history
+from backend.services.db_client import add_cron_log, update_cron_log, delete_cron_log, get_cron_history as _get_history
 
 router = APIRouter()
 
@@ -31,6 +31,24 @@ CRON_TASKS = [
         "description": "生成当日复盘报告（含市场总结+持仓回顾+交易铁律）",
         "icon": "📋",
         "schedule": "20:30",
+    },
+    {
+        "name": "午盘分析",
+        "description": "生成午盘分析报告（盘中概览+板块轮动）",
+        "icon": "🌤️",
+        "schedule": "11:40",
+    },
+    {
+        "name": "午盘板块分析",
+        "description": "基于午盘快照生成盘中板块轮动分析",
+        "icon": "🌤️",
+        "schedule": "11:40",
+    },
+    {
+        "name": "收盘板块分析",
+        "description": "基于收盘数据生成板块轮动分析（涨跌排名+资金流向+涨停分布）",
+        "icon": "📊",
+        "schedule": "20:35",
     },
     {
         "name": "思维模型反思",
@@ -84,8 +102,13 @@ def run_cron_job(job_name: str):
     try:
         if job_name == "收盘数据":
             fetch_script = str(Path.home() / "Jarvis" / "fetch_a_stock_data.py")
+            # 清理今日空壳文件
+            today_str = date.today().isoformat()
+            today_path = str(Path.home() / "Jarvis" / "A股行情信息" / f"沪深京A股{today_str}.csv")
+            if os.path.exists(today_path) and os.path.getsize(today_path) < 1000:
+                os.remove(today_path)
             if os.path.exists(fetch_script):
-                r = _run_shell([sys.executable, fetch_script, "--date", date.today().isoformat()])
+                r = _run_shell([sys.executable, fetch_script, "--date", today_str])
             else:
                 r = {"returncode": -1, "stdout": [], "stderr": [f"脚本不存在: {fetch_script}"]}
 
@@ -101,8 +124,16 @@ def run_cron_job(job_name: str):
 
         elif job_name == "午盘快照":
             fetch_script = str(Path.home() / "Jarvis" / "fetch_a_stock_data.py")
+            # 清理今日空壳文件（akshare失败留下的空headers），否则fetch脚本读不到股票列表
+            today_str = date.today().isoformat()
+            today_close = str(Path.home() / "Jarvis" / "A股行情信息" / f"沪深京A股{today_str}.csv")
+            today_noon = str(Path.home() / "Jarvis" / "A股行情信息" / f"沪深京A股{today_str}_noon.csv")
+            for f in [today_close, today_noon]:
+                if os.path.exists(f) and os.path.getsize(f) < 1000:
+                    os.remove(f)
+                    print(f"  🧹 已清理空壳文件: {os.path.basename(f)}")
             if os.path.exists(fetch_script):
-                r = _run_shell([sys.executable, fetch_script, "--date", date.today().isoformat(), "--suffix", "noon"])
+                r = _run_shell([sys.executable, fetch_script, "--date", today_str, "--suffix", "noon"])
             else:
                 r = {"returncode": -1, "stdout": [], "stderr": [f"脚本不存在: {fetch_script}"]}
 
@@ -117,26 +148,98 @@ def run_cron_job(job_name: str):
             result["detail"] = r
 
         elif job_name == "复盘日报":
-            # 检查是否已有今日复盘报告
+            # 实际生成复盘报告
+            from backend.services.generate_daily_report import save_report
             from backend.config import REPORT_DIR
             today_str = date.today().isoformat()
-            report_path = REPORT_DIR / f"A股复盘_{today_str}.md"
-            if report_path.exists():
-                content = report_path.read_text(encoding="utf-8")
-                lines = content.strip().split("\n")
+            ok, msg_or_content = save_report(today_str)
+            if ok:
+                lines = msg_or_content.strip().split("\n")
                 preview = lines[0][:60] if lines else ""
-                msg = f"今日复盘已存在（{len(content)}字）"
+                msg = f"✅ 复盘报告已生成（{len(msg_or_content)}字）"
                 update_cron_log(log_id, "success", msg)
                 result.update({"status": "success", "message": msg, "preview": preview})
             else:
-                # 找最近一份报告
+                # 报告生成失败
+                msg = msg_or_content
                 candidates = sorted(REPORT_DIR.glob("A股复盘_*.md"), reverse=True)
                 if candidates:
                     latest = candidates[0]
                     latest_date = latest.stem.replace("A股复盘_", "")
-                    msg = f"今日无报告，最近为{latest_date}"
-                else:
-                    msg = "尚无复盘报告，请确保已配置复盘cron任务"
+                    msg += f" | 最新报告为{latest_date}"
+                update_cron_log(log_id, "failed", msg)
+                result.update({"status": "failed", "message": msg})
+
+        elif job_name == "午盘分析":
+            # 生成午盘分析报告
+            from backend.services.generate_noon_report import save_noon_report
+            from backend.config import REPORT_DIR
+            today_str = date.today().isoformat()
+            ok, msg_or_content = save_noon_report(today_str)
+            if ok:
+                lines = msg_or_content.strip().split("\n")
+                preview = lines[0][:60] if lines else ""
+                msg = f"✅ 午盘分析已生成（{len(msg_or_content)}字）"
+                update_cron_log(log_id, "success", msg)
+                result.update({"status": "success", "message": msg, "preview": preview})
+            else:
+                msg = msg_or_content
+                candidates = sorted(REPORT_DIR.glob("午盘分析_*.md"), reverse=True)
+                if candidates:
+                    latest = candidates[0]
+                    latest_date = latest.stem.replace("午盘分析_", "")
+                    msg += f" | 最新分析为{latest_date}"
+                update_cron_log(log_id, "failed", msg)
+                result.update({"status": "failed", "message": msg})
+
+        elif job_name == "收盘板块分析":
+            # 先刷新数据库行业数据（收盘才刷新）
+            from backend.routers.mental_models import refresh_sector_dispersion
+            from backend.services.generate_sector_report import save_sector_report
+            from backend.config import REPORT_DIR
+            today_str = date.today().isoformat()
+            try:
+                refresh_result = refresh_sector_dispersion(today_str)
+                refresh_msg = f"已刷新{refresh_result.get('sectors',0)}个板块 → "
+            except Exception as e:
+                refresh_msg = f"刷新失败({e}) → "
+            # 生成收盘板块轮动分析
+            ok, msg_or_content = save_sector_report(today_str, suffix="")
+            if ok:
+                lines = msg_or_content.strip().split("\n")
+                preview = lines[0][:60] if lines else ""
+                msg = refresh_msg + f"✅ 收盘板块分析已生成（{len(msg_or_content)}字）"
+                update_cron_log(log_id, "success", msg)
+                result.update({"status": "success", "message": msg, "preview": preview})
+            else:
+                msg = msg_or_content
+                candidates = sorted(REPORT_DIR.glob("板块分析_*.md"), reverse=True)
+                if candidates:
+                    latest = candidates[0]
+                    latest_date = latest.stem.replace("板块分析_", "")
+                    msg += f" | 最新分析为{latest_date}"
+                update_cron_log(log_id, "failed", msg)
+                result.update({"status": "failed", "message": msg})
+
+        elif job_name == "午盘板块分析":
+            # 基于午盘快照生成盘中板块轮动分析（不刷新数据库）
+            from backend.services.generate_sector_report import save_sector_report
+            from backend.config import REPORT_DIR
+            today_str = date.today().isoformat()
+            ok, msg_or_content = save_sector_report(today_str, suffix="noon")
+            if ok:
+                lines = msg_or_content.strip().split("\n")
+                preview = lines[0][:60] if lines else ""
+                msg = f"✅ 午盘板块分析已生成（{len(msg_or_content)}字）"
+                update_cron_log(log_id, "success", msg)
+                result.update({"status": "success", "message": msg, "preview": preview})
+            else:
+                msg = msg_or_content
+                candidates = sorted(REPORT_DIR.glob("午盘板块分析_*.md"), reverse=True)
+                if candidates:
+                    latest = candidates[0]
+                    latest_date = latest.stem.replace("午盘板块分析_", "")
+                    msg += f" | 最新分析为{latest_date}"
                 update_cron_log(log_id, "failed", msg)
                 result.update({"status": "failed", "message": msg})
 
@@ -200,6 +303,15 @@ def edit_cron_log(
 ):
     update_cron_log(log_id, status, message)
     return {"id": log_id, "status": "updated"}
+
+
+@router.delete("/cron-history/{log_id}")
+def remove_cron_log(log_id: int):
+    """删除cron任务记录"""
+    deleted = delete_cron_log(log_id)
+    if not deleted:
+        raise HTTPException(404, f"记录 {log_id} 不存在")
+    return {"id": log_id, "status": "deleted"}
 
 
 @router.get("/cron-history/{log_id}")

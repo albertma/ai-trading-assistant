@@ -62,6 +62,25 @@ def daily_report_json():
     }
 
 
+@router.get("/latest")
+def report_latest():
+    """获取最新复盘报告日期（实时读文件夹）"""
+    candidates = sorted(REPORT_DIR.glob("A股复盘_*.md"), reverse=True)
+    if not candidates:
+        return {"date": None, "exists": False, "message": "尚无复盘报告"}
+    latest = candidates[0]
+    report_date = latest.stem.replace("A股复盘_", "")
+    today_str = date.today().isoformat()
+    has_today = (report_date == today_str)
+    return {
+        "date": report_date,
+        "exists": has_today,
+        "message": f"最新报告: {report_date}" + ("" if has_today else f"，今日({today_str})尚未生成"),
+        "path": str(latest),
+        "size": latest.stat().st_size,
+    }
+
+
 @router.get("/list")
 def report_list():
     """获取最近复盘报告列表"""

@@ -337,6 +337,16 @@ def update_cron_log(log_id: int, status: str, message: str = ""):
     conn.close()
 
 
+def delete_cron_log(log_id: int) -> bool:
+    """删除cron任务记录，返回是否找到并删除"""
+    conn = get_db()
+    cur = conn.execute("DELETE FROM cron_history WHERE id = ?", (log_id,))
+    conn.commit()
+    deleted = cur.rowcount > 0
+    conn.close()
+    return deleted
+
+
 def get_cron_history(limit: int = 50, task_name: str = None) -> list[dict]:
     """获取cron任务历史"""
     conn = get_db()

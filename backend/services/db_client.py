@@ -48,7 +48,7 @@ from backend.services.database.stock_db import (
     refresh_stock_info_from_csv, refresh_stock_detail_from_akshare,
 
     # Cron历史
-    add_cron_log, update_cron_log, get_cron_history,
+    add_cron_log, update_cron_log, delete_cron_log, get_cron_history,
 )
 
 
