@@ -818,6 +818,69 @@ def refresh_sector_dispersion(date_str: str = Query(None, alias="date")):
     return {"date": target_date, "sectors": inserted, "status": "ok"}
 
 
+def compute_sector_cycles(target_date: str, days: int = 3) -> dict:
+    """从 sector_dispersion 计算 sector_cycles（独立函数，API和cron共用）"""
+    conn = get_db()
+    today_rows = conn.execute(
+        "SELECT * FROM sector_dispersion WHERE date = ? ORDER BY sector", (target_date,)
+    ).fetchall()
+    if not today_rows:
+        conn.close()
+        return {"date": target_date, "sectors": 0, "error": "当日无行业分化数据"}
+
+    prev_date = (date.fromisoformat(target_date) - timedelta(days=days)).isoformat()
+    prev_rows = conn.execute(
+        "SELECT sector, avg_change FROM sector_dispersion WHERE date >= ? AND date < ? ORDER BY date DESC",
+        (prev_date, target_date)
+    ).fetchall()
+    conn.close()
+
+    prev_map = {}
+    for r in prev_rows:
+        d = dict(r)
+        if d["sector"] not in prev_map:
+            prev_map[d["sector"]] = d["avg_change"]
+
+    phase_order = {"高潮🎯": 0, "普涨🚀": 1, "启动🔥": 2, "冰点反弹🌱": 3, "筑底🏗️": 4,
+                   "酝酿🌋": 5, "分化⚡": 6, "退潮🌊": 7, "防御🛡️": 8, "冰点❄️": 9,
+                   "普跌📉": 10, "震荡⚖️": 11}
+
+    result = []
+    for r in today_rows:
+        d = dict(r)
+        phase, icon, color, desc = _classify_sector_phase(
+            d["avg_change"], d["std_change"], d["up_pct"], prev_map.get(d["sector"])
+        )
+        result.append({
+            "sector": d["sector"],
+            "avg_change": d["avg_change"],
+            "dispersion": d["std_change"],
+            "up_pct": d["up_pct"],
+            "stock_count": d["stock_count"],
+            "max_change": d["max_change"],
+            "min_change": d["min_change"],
+            "phase": phase, "icon": icon, "color": color, "desc": desc,
+        })
+
+    result.sort(key=lambda x: phase_order.get(x["phase"], 99))
+
+    conn2 = get_db()
+    conn2.execute("DELETE FROM sector_cycles WHERE date = ?", (target_date,))
+    for s in result:
+        conn2.execute(
+            """INSERT OR IGNORE INTO sector_cycles
+               (date, sector, avg_change, dispersion, up_pct, stock_count, max_change, min_change, phase, icon, phase_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (target_date, s["sector"], s["avg_change"], s["dispersion"], s["up_pct"],
+             s["stock_count"], s["max_change"], s["min_change"],
+             s["phase"], s["icon"], phase_order.get(s["phase"], 99))
+        )
+    conn2.commit()
+    conn2.close()
+
+    return {"date": target_date, "sectors": len(result), "message": "计算完成"}
+
+
 # -----------------------------------------------------------
 # API: 板块周期分析（普涨/分化/冰点/冰点反弹/启动）
 # -----------------------------------------------------------
@@ -862,72 +925,25 @@ def get_sector_cycles(date_str: str = Query(None, alias="date"), days: int = Que
             }
 
     # 无缓存 → 从 sector_dispersion 实时计算
-    today_rows = conn.execute(
-        "SELECT * FROM sector_dispersion WHERE date = ? ORDER BY sector", (target_date,)
-    ).fetchall()
-    if not today_rows:
-        conn.close()
-        return {"date": target_date, "sectors": [], "message": "当日无行业分化数据"}
+    conn.close()
+    compute_sector_cycles(target_date, days)
 
-    # 获取前日数据用于冰点反弹/启动判定
-    prev_date = (date.fromisoformat(target_date) - timedelta(days=days)).isoformat()
-    prev_rows = conn.execute(
-        "SELECT sector, avg_change FROM sector_dispersion WHERE date >= ? AND date < ? ORDER BY date DESC",
-        (prev_date, target_date)
+    # 计算完成后再读缓存
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM sector_cycles WHERE date = ? ORDER BY phase_order, sector",
+        (target_date,)
     ).fetchall()
     conn.close()
-
-    prev_map = {}
-    for r in prev_rows:
-        d = dict(r)
-        if d["sector"] not in prev_map:
-            prev_map[d["sector"]] = d["avg_change"]
-
-    phase_order = {"高潮🎯": 0, "普涨🚀": 1, "启动🔥": 2, "冰点反弹🌱": 3, "筑底🏗️": 4,
-                   "酝酿🌋": 5, "分化⚡": 6, "退潮🌊": 7, "防御🛡️": 8, "冰点❄️": 9,
-                   "普跌📉": 10, "震荡⚖️": 11}
-
-    result = []
-    for r in today_rows:
-        d = dict(r)
-        phase, icon, color, desc = _classify_sector_phase(
-            d["avg_change"], d["std_change"], d["up_pct"], prev_map.get(d["sector"])
-        )
-        result.append({
-            "sector": d["sector"],
-            "avg_change": d["avg_change"],
-            "dispersion": d["std_change"],
-            "up_pct": d["up_pct"],
-            "stock_count": d["stock_count"],
-            "max_change": d["max_change"],
-            "min_change": d["min_change"],
-            "phase": phase, "icon": icon, "color": color, "desc": desc,
-        })
-
-    result.sort(key=lambda x: phase_order.get(x["phase"], 99))
-
-    # 自动持久化
-    conn2 = get_db()
-    conn2.execute("DELETE FROM sector_cycles WHERE date = ?", (target_date,))
-    for s in result:
-        conn2.execute(
-            """INSERT OR IGNORE INTO sector_cycles
-               (date, sector, avg_change, dispersion, up_pct, stock_count, max_change, min_change, phase, icon, phase_order)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (target_date, s["sector"], s["avg_change"], s["dispersion"], s["up_pct"],
-             s["stock_count"], s["max_change"], s["min_change"],
-             s["phase"], s["icon"], phase_order.get(s["phase"], 99))
-        )
-    conn2.commit()
-    conn2.close()
-
-    return {
-        "date": target_date,
-        "total_sectors": len(result),
-        "sectors": result,
-        "summary": _summarize_cycles(result),
-        "source": "computed",
-    }
+    if rows:
+        return {
+            "date": target_date,
+            "total_sectors": len(rows),
+            "sectors": [dict(r) for r in rows],
+            "summary": _summarize_cycles([dict(r) for r in rows]),
+            "source": "computed",
+        }
+    return {"date": target_date, "sectors": [], "message": "计算后仍无数据"} 
 
 
 @router.get("/sector-cycles/dates")

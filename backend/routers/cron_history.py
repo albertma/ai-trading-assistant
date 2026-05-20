@@ -194,13 +194,19 @@ def run_cron_job(job_name: str):
 
         elif job_name == "收盘板块分析":
             # 先刷新数据库行业数据（收盘才刷新）
-            from backend.routers.mental_models import refresh_sector_dispersion
+            from backend.routers.mental_models import refresh_sector_dispersion, compute_sector_cycles
             from backend.services.generate_sector_report import save_sector_report
             from backend.config import REPORT_DIR
             today_str = date.today().isoformat()
             try:
                 refresh_result = refresh_sector_dispersion(today_str)
                 refresh_msg = f"已刷新{refresh_result.get('sectors',0)}个板块 → "
+                # 同步计算板块周期相位（sector_cycles）
+                try:
+                    cycle_result = compute_sector_cycles(today_str)
+                    refresh_msg += f"周期相位{cycle_result.get('sectors',0)}个板块 → "
+                except Exception as e2:
+                    refresh_msg += f"周期计算跳过({e2}) → "
             except Exception as e:
                 refresh_msg = f"刷新失败({e}) → "
             # 生成收盘板块轮动分析
@@ -222,15 +228,27 @@ def run_cron_job(job_name: str):
                 result.update({"status": "failed", "message": msg})
 
         elif job_name == "午盘板块分析":
-            # 基于午盘快照生成盘中板块轮动分析（不刷新数据库）
+            # 基于午盘快照生成盘中板块轮动分析（同时刷新数据库+计算周期）
+            from backend.routers.mental_models import refresh_sector_dispersion, compute_sector_cycles
             from backend.services.generate_sector_report import save_sector_report
             from backend.config import REPORT_DIR
             today_str = date.today().isoformat()
+            noon_msg = ""
+            try:
+                refresh_result = refresh_sector_dispersion(today_str)
+                noon_msg = f"已刷新{refresh_result.get('sectors',0)}个板块"
+                try:
+                    cycle_result = compute_sector_cycles(today_str)
+                    noon_msg += f" | 周期相位{cycle_result.get('sectors',0)}个"
+                except Exception as e2:
+                    noon_msg += f" | 周期计算跳过({e2})"
+            except Exception as e:
+                noon_msg = f"午盘数据刷新({e})"
             ok, msg_or_content = save_sector_report(today_str, suffix="noon")
             if ok:
                 lines = msg_or_content.strip().split("\n")
                 preview = lines[0][:60] if lines else ""
-                msg = f"✅ 午盘板块分析已生成（{len(msg_or_content)}字）"
+                msg = f"✅ 午盘板块分析已生成（{len(msg_or_content)}字）| {noon_msg}"
                 update_cron_log(log_id, "success", msg)
                 result.update({"status": "success", "message": msg, "preview": preview})
             else:
