@@ -45,13 +45,19 @@ def get_prices_from_position_file(codes: list[str]) -> dict[str, float]:
 
 
 def find_latest_csv(max_lookback: int = 30) -> str | None:
-    """找最新的可用CSV，往回搜max_lookback天"""
+    """找最新的可用CSV（有数据行 > 0），往回搜max_lookback天"""
     today = date.today()
     for i in range(max_lookback):
         d = (today - timedelta(days=i)).isoformat()
         path = MARKET_DATA_DIR / f"沪深京A股{d}.csv"
         if path.exists():
-            return str(path)
+            # 检查文件是否真有数据行（跳过仅有表头的空文件，如未收盘时创建的）
+            try:
+                df = _read_csv(str(path))
+                if df is not None and len(df) > 0:
+                    return str(path)
+            except Exception:
+                return str(path)  # 读不到就返回有内容的兜底
     return None
 
 

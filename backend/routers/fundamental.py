@@ -411,89 +411,185 @@ def _parse_num(val) -> float | None:
 
 
 def _get_dupont_analysis(code: str) -> dict | None:
-    """杜邦分析：拆解ROE增长来源
+    """杜邦分析：拆解ROE增长来源（TTM滚动4季度）
 
-    ROE = 净利率 × 资产周转率 × 权益乘数
+    A股财报是累积制：
+      Q1 = 1-3月, 中报 = 1-6月, Q3 = 1-9月, 年报 = 1-12月
+    本函数将累积值转为**单季度**值，再计算 **TTM（最近4个季度总和）**。
 
-    净利率 → 盈利能力
-    资产周转率 → 运营效率
-    权益乘数 → 财务杠杆
+    ROE(TTM) = 最近4个季度的净利润之和 / 平均股东权益
     """
     fin = _get_financial_summary(code)
     if not fin or not fin.get("records"):
         return None
 
     records = fin["records"]
-    dupont_rows = []
+
+    # 1. 筛选有完整数据的记录，排序（旧→新）
+    parsed = []
     for r in records:
         period = r.get("报告期", "")
-        # 解析关键数据
-        net_profit = _parse_num(r.get("净利润"))  # 亿
-        revenue = _parse_num(r.get("营业总收入"))  # 亿
-        net_margin_pct = _parse_num(r.get("销售净利率"))  # %
-        roe_pct = _parse_num(r.get("净资产收益率"))  # %
-        debt_ratio_pct = _parse_num(r.get("资产负债率"))  # %
+        if len(period) != 10 or period.count("-") != 2:
+            continue
+        try:
+            y, m, d = period.split("-")
+            ymd = int(y + m + d)
+        except (ValueError, TypeError):
+            continue
 
-        if None in (net_profit, revenue, net_margin_pct, roe_pct, debt_ratio_pct):
-            # 早期数据缺失则跳过
-            if net_margin_pct and debt_ratio_pct:
-                # 至少可以算权益乘数和净利率
+        net_profit = _parse_num(r.get("净利润"))
+        revenue = _parse_num(r.get("营业总收入"))
+        net_margin_pct = _parse_num(r.get("销售净利率"))
+        roe_pct = _parse_num(r.get("净资产收益率"))
+        debt_ratio_pct = _parse_num(r.get("资产负债率"))
+
+        # 至少要有营收和负债率
+        if revenue is None or debt_ratio_pct is None:
+            continue
+
+        parsed.append({
+            "ymd": ymd,
+            "period": period,
+            "year": int(y),
+            "month": int(m),
+            "net_profit_cum": net_profit or 0,
+            "revenue_cum": revenue or 0,
+            "net_margin_pct": net_margin_pct,
+            "roe_pct": roe_pct,
+            "debt_ratio_pct": debt_ratio_pct,
+        })
+
+    if len(parsed) < 4:
+        # 数据不足4期，回退到原始累积逻辑
+        return _get_dupont_fallback(records)
+
+    parsed.sort(key=lambda x: x["ymd"])
+
+    # 2. 推导单季度值（从累积值减去上一期累积）
+    def get_prev_cum(records_sorted, idx):
+        """找到同一财政年度内上一期的累积值"""
+        cur = records_sorted[idx]
+        for j in range(idx - 1, -1, -1):
+            prev = records_sorted[j]
+            if prev["year"] == cur["year"]:
+                # 同一年的前一期（3月→6月→9月→12月）
+                return prev
+        # Q1: 没有同年前期，用当年累积值作为单季度值
+        return None
+
+    standalone = []
+    for i, cur in enumerate(parsed):
+        q_label = f"{cur['year']}Q{(cur['month'] - 1) // 3 + 1}"
+
+        prev = get_prev_cum(parsed, i)
+
+        if prev is not None and prev["ymd"] < cur["ymd"]:
+            # 单季度 = 本期累积 - 上期累积
+            rev_q = cur["revenue_cum"] - prev["revenue_cum"]
+            np_q = cur["net_profit_cum"] - prev["net_profit_cum"]
+            is_standalone = True
+        else:
+            # 第一季或没有上期累积（如只有年报），直接用累积值
+            rev_q = cur["revenue_cum"]
+            np_q = cur["net_profit_cum"]
+            is_standalone = False
+
+        standalone.append({
+            "period": cur["period"],
+            "q_label": q_label,
+            "year": cur["year"],
+            "month": cur["month"],
+            "ymd": cur["ymd"],
+            "revenue_q": rev_q,
+            "net_profit_q": np_q,
+            "revenue_cum": cur["revenue_cum"],
+            "net_profit_cum": cur["net_profit_cum"],
+            "debt_ratio_pct": cur["debt_ratio_pct"],
+            "roe_pct": cur["roe_pct"],
+            "net_margin_pct": cur["net_margin_pct"],
+            "is_standalone": is_standalone,
+        })
+
+    # 3. 计算 TTM（最近4个单季度滚动求和）
+    dupont_rows = []
+    for i in range(len(standalone)):
+        # 取最近4个单季度（含本期）
+        window = standalone[max(0, i - 3): i + 1]
+        if len(window) < 4:
+            # 不足4个季度，用累积值近似
+            cur = standalone[i]
+            rev_ttm = cur["revenue_cum"]
+            np_ttm = cur["net_profit_cum"]
+            if cur["month"] == 12:
+                # 年报本来就是全年
                 pass
             else:
+                # 不足4季，跳过早的
                 continue
-
-        # 计算权益乘数 = 1 / (1 - 资产负债率)
-        equity_multiplier = round(1 / (1 - debt_ratio_pct / 100), 4) if debt_ratio_pct else None
-
-        # 计算总资产 = 股东权益 / (1 - 资产负债率)
-        # 股东权益 = 净利润 / ROE（负ROE+负净利也能算出正权益）
-        if roe_pct and abs(roe_pct) < 200:
-            equity = net_profit / (roe_pct / 100)  # 亿
-            total_assets = equity / (1 - debt_ratio_pct / 100) if debt_ratio_pct < 100 else None  # 亿
         else:
-            equity = None
-            total_assets = None
+            rev_ttm = sum(w["revenue_q"] for w in window)
+            np_ttm = sum(w["net_profit_q"] for w in window)
 
-        # 资产周转率 = 营业总收入 / 总资产
-        asset_turnover = round(revenue / total_assets, 4) if total_assets and total_assets > 0 else None
+        cur = standalone[i]
+        # TTM 净利率
+        ttm_net_margin_pct = round(np_ttm / rev_ttm * 100, 4) if rev_ttm != 0 else None
 
-        # 净利率（直接用销售净利率，但也可以用净利润/营收推算验证）
-        net_margin = round(net_margin_pct / 100, 4) if net_margin_pct else None
+        # 资产负债率：使用最新一期值（资产负债表是时点数）
+        debt_pct = cur["debt_ratio_pct"]
+        equity_multiplier = round(1 / (1 - debt_pct / 100), 4) if debt_pct and debt_pct < 100 else None
 
-        # 计算ROE验证
-        roe_calc = round(net_margin * asset_turnover * equity_multiplier, 4) if all(
-            x is not None for x in [net_margin, asset_turnover, equity_multiplier]
-        ) else None
+        # 股东权益 = 总资产 - 总负债
+        # 总资产 = 股东权益 / (1 - 资产负债率)
+        # 股东权益 ≈ 总资产 × (1 - 负债率)
+        # 从ROE反推: equity = net_profit_ttm / ROE
+        if cur["roe_pct"] and abs(cur["roe_pct"]) < 200 and cur["roe_pct"] != 0:
+            # 年报ROE是全年的，非年报ROE是累积期间的
+            # 估算当前权益 = TTM净利 / TTM ROE
+            equity_est = np_ttm / (cur["roe_pct"] / 100)
+            total_assets_est = equity_est / (1 - debt_pct / 100) if debt_pct < 100 else None
+        else:
+            equity_est = None
+            total_assets_est = None
+
+        # 资产周转率(TTM) = TTM营收 / 总资产
+        asset_turnover_ttm = round(rev_ttm / total_assets_est, 4) if total_assets_est and total_assets_est > 0 else None
+
+        # TTM ROE = TTM净利润 / 股东权益
+        roe_ttm = round(np_ttm / equity_est * 100, 2) if equity_est and equity_est != 0 else None
+
+        # 杜邦验证：ROE = 净利率 × 周转率 × 杠杆
+        roe_calc = None
+        if ttm_net_margin_pct is not None and asset_turnover_ttm is not None and equity_multiplier is not None:
+            roe_calc = round((ttm_net_margin_pct / 100) * asset_turnover_ttm * equity_multiplier * 100, 2)
 
         dupont_rows.append({
-            "period": period,
-            "roe_pct": roe_pct,  # 实际ROE(%)
-            "roe_calc_pct": round(roe_calc * 100, 2) if roe_calc else None,  # 计算ROE(%)
-            "net_margin_pct": net_margin_pct,  # 净利率(%)
-            "asset_turnover": asset_turnover,  # 资产周转率(次)
-            "equity_multiplier": equity_multiplier,  # 权益乘数
-            "net_profit": round(net_profit, 2) if net_profit else None,  # 净利润(亿)
-            "revenue": round(revenue, 2) if revenue else None,  # 营收(亿)
-            "total_assets": round(total_assets, 2) if total_assets else None,  # 总资产(亿)
-            "debt_ratio_pct": debt_ratio_pct,  # 资产负债率(%)
+            "period": cur["period"],
+            "q_label": cur["q_label"],
+            "roe_pct": roe_ttm,  # TTM ROE(%)
+            "roe_calc_pct": roe_calc,
+            "net_margin_pct": ttm_net_margin_pct,  # TTM净利率(%)
+            "asset_turnover": asset_turnover_ttm,  # TTM周转率
+            "equity_multiplier": equity_multiplier,
+            "net_profit": round(np_ttm, 2),  # TTM净利润(亿)
+            "revenue": round(rev_ttm, 2),  # TTM营收(亿)
+            "total_assets": round(total_assets_est, 2) if total_assets_est else None,
+            "debt_ratio_pct": debt_pct,
         })
 
     if not dupont_rows:
-        return None
+        return _get_dupont_fallback(records)
 
-    # 计算同比变化：最近12期的逐期变化
-    rows_for_changes = dupont_rows[-12:]
+    # 4. 变化分析（TTM期 vs TTM期）
     changes = []
-    for i in range(len(rows_for_changes) - 1, 0, -1):
-        cur = rows_for_changes[i]
-        prev = rows_for_changes[i - 1]
+    for i in range(len(dupont_rows) - 1, 0, -1):
+        cur = dupont_rows[i]
+        prev = dupont_rows[i - 1]
         if cur.get("roe_pct") and prev.get("roe_pct"):
             roe_chg = round(cur["roe_pct"] - prev["roe_pct"], 2)
             nm_chg = round(cur["net_margin_pct"] - prev["net_margin_pct"], 2) if cur.get("net_margin_pct") and prev.get("net_margin_pct") else None
             at_chg = round(cur["asset_turnover"] - prev["asset_turnover"], 4) if cur.get("asset_turnover") and prev.get("asset_turnover") else None
             em_chg = round(cur["equity_multiplier"] - prev["equity_multiplier"], 4) if cur.get("equity_multiplier") and prev.get("equity_multiplier") else None
 
-            # 找出主要驱动因素
             drivers = []
             if nm_chg is not None and abs(nm_chg) >= 0.5:
                 drivers.append(f"净利率{'↑' if nm_chg > 0 else '↓'}{abs(nm_chg):.1f}pp")
@@ -514,11 +610,91 @@ def _get_dupont_analysis(code: str) -> dict | None:
                 "direction": direction,
             })
 
-    # 只取最近5期
     dupont_rows = dupont_rows[-12:]
 
     return {
         "rows": dupont_rows,
+        "changes": changes[:3] if changes else [],
+        "latest": dupont_rows[-1] if dupont_rows else None,
+    }
+
+
+def _get_dupont_fallback(records: list) -> dict | None:
+    """累积制回退：直接使用原始累积值（数据不足4期时）"""
+    dupont_rows = []
+    for r in records:
+        period = r.get("报告期", "")
+        net_profit = _parse_num(r.get("净利润"))
+        revenue = _parse_num(r.get("营业总收入"))
+        net_margin_pct = _parse_num(r.get("销售净利率"))
+        roe_pct = _parse_num(r.get("净资产收益率"))
+        debt_ratio_pct = _parse_num(r.get("资产负债率"))
+
+        if None in (net_profit, revenue, net_margin_pct, roe_pct, debt_ratio_pct):
+            if net_margin_pct and debt_ratio_pct:
+                pass
+            else:
+                continue
+
+        equity_multiplier = round(1 / (1 - debt_ratio_pct / 100), 4) if debt_ratio_pct else None
+
+        if roe_pct and abs(roe_pct) < 200:
+            equity = net_profit / (roe_pct / 100)
+            total_assets = equity / (1 - debt_ratio_pct / 100) if debt_ratio_pct < 100 else None
+        else:
+            equity = None
+            total_assets = None
+
+        asset_turnover = round(revenue / total_assets, 4) if total_assets and total_assets > 0 else None
+        net_margin = round(net_margin_pct / 100, 4) if net_margin_pct else None
+        roe_calc = round(net_margin * asset_turnover * equity_multiplier, 4) if all(
+            x is not None for x in [net_margin, asset_turnover, equity_multiplier]
+        ) else None
+
+        dupont_rows.append({
+            "period": period,
+            "q_label": "",
+            "roe_pct": roe_pct,
+            "roe_calc_pct": round(roe_calc * 100, 2) if roe_calc else None,
+            "net_margin_pct": net_margin_pct,
+            "asset_turnover": asset_turnover,
+            "equity_multiplier": equity_multiplier,
+            "net_profit": round(net_profit, 2) if net_profit else None,
+            "revenue": round(revenue, 2) if revenue else None,
+            "total_assets": round(total_assets, 2) if total_assets else None,
+            "debt_ratio_pct": debt_ratio_pct,
+        })
+
+    if not dupont_rows:
+        return None
+
+    changes = []
+    rows_for_changes = dupont_rows[-12:]
+    for i in range(len(rows_for_changes) - 1, 0, -1):
+        cur = rows_for_changes[i]
+        prev = rows_for_changes[i - 1]
+        if cur.get("roe_pct") and prev.get("roe_pct"):
+            roe_chg = round(cur["roe_pct"] - prev["roe_pct"], 2)
+            nm_chg = round(cur["net_margin_pct"] - prev["net_margin_pct"], 2) if cur.get("net_margin_pct") and prev.get("net_margin_pct") else None
+            at_chg = round(cur["asset_turnover"] - prev["asset_turnover"], 4) if cur.get("asset_turnover") and prev.get("asset_turnover") else None
+            em_chg = round(cur["equity_multiplier"] - prev["equity_multiplier"], 4) if cur.get("equity_multiplier") and prev.get("equity_multiplier") else None
+            drivers = []
+            if nm_chg is not None and abs(nm_chg) >= 0.5:
+                drivers.append(f"净利率{'↑' if nm_chg > 0 else '↓'}{abs(nm_chg):.1f}pp")
+            if at_chg is not None and abs(at_chg) >= 0.05:
+                drivers.append(f"周转率{'↑' if at_chg > 0 else '↓'}{abs(at_chg):.2f}x")
+            if em_chg is not None and abs(em_chg) >= 0.1:
+                drivers.append(f"杠杆{'↑' if em_chg > 0 else '↓'}{abs(em_chg):.2f}x")
+            direction = "up" if roe_chg > 0 else "down" if roe_chg < 0 else "flat"
+            changes.append({
+                "from_period": prev["period"], "to_period": cur["period"],
+                "roe_change": roe_chg, "net_margin_change": nm_chg,
+                "asset_turnover_change": at_chg, "equity_multiplier_change": em_chg,
+                "main_drivers": drivers if drivers else ["多因素综合"], "direction": direction,
+            })
+
+    return {
+        "rows": dupont_rows[-12:],
         "changes": changes[:3] if changes else [],
         "latest": dupont_rows[-1] if dupont_rows else None,
     }

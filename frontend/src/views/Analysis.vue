@@ -693,10 +693,15 @@
                         </div>
                     </el-card>
                     <el-card shadow="hover" style="margin-bottom:16px;">
-                        <template #header><b>📈 杜邦分解趋势（最近12期）</b></template>
+                        <template #header><b>📈 杜邦分解趋势（TTM滚动4季度，最近12期）</b></template>
                         <el-table :data="dupontData.dupont.rows" border size="small" style="width:100%"
                             :default-sort="{ prop: 'period', order: 'descending' }">
-                            <el-table-column prop="period" label="报告期" width="110" sortable />
+                            <el-table-column label="报告期(TTM)" width="130" sortable prop="period">
+                                <template #default="{ row }">
+                                    {{ row.period?.slice(0,7) ?? '' }}
+                                    <el-tag v-if="row.q_label" size="mini" effect="plain" style="margin-left:2px;">{{ row.q_label }}</el-tag>
+                                </template>
+                            </el-table-column>
                             <el-table-column prop="roe_pct" label="ROE(%)" width="80" sortable>
                                 <template #default="{ row }">
                                     <span :style="{ color: (row.roe_pct||0) >= 0 ? '#f56c6c' : '#67c23a', fontWeight:'bold' }">{{ row.roe_pct?.toFixed(2) ?? '--' }}%</span>
