@@ -263,6 +263,31 @@
                     </el-card>
                 </el-col>
             </el-row>
+
+            <!-- 叙事分析入口 -->
+            <el-card v-if="narrativesCount > 0" shadow="hover" style="margin-top:16px;border:1px solid #334;cursor:pointer;"
+                @click="$router.push('/narratives')">
+                <el-row :gutter="16" align="middle">
+                    <el-col :span="1"><span style="font-size:24px;">🎯</span></el-col>
+                    <el-col :span="5"><b>市场叙事分析</b></el-col>
+                    <el-col :span="6">
+                        <el-tag size="small" type="info" effect="plain">
+                            发现 {{ narrativesCount }} 个叙事主题
+                        </el-tag>
+                    </el-col>
+                    <el-col :span="8">
+                        <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                            <el-tag v-for="(count, stage) in narrativeStageCounts" :key="stage"
+                                size="small" :color="lifecycleColor(stage)" effect="dark" style="color:#fff;border:0;">
+                                {{ stage }} {{ count }}
+                            </el-tag>
+                        </div>
+                    </el-col>
+                    <el-col :span="4" style="text-align:right;">
+                        <el-button size="small" type="primary" text>查看详情 →</el-button>
+                    </el-col>
+                </el-row>
+            </el-card>
         </template>
 
         <!-- 加载 / 无数据 -->
@@ -279,7 +304,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
-import { getMarketOverview, getMarketDates, getSentimentCycle, getIndexHistory, getDailyNote, saveDailyNote, refreshMarketData } from '../api/index.js'
+import { getMarketOverview, getMarketDates, getSentimentCycle, getIndexHistory, getDailyNote, saveDailyNote, refreshMarketData, getMarketNarratives } from '../api/index.js'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 
@@ -417,6 +442,34 @@ async function loadData(dateStr) {
 
 function onSessionChange(val) {
     loadData(dataDate.value)
+}
+
+// ===== 叙事分析（入口卡片） =====
+const narratives = ref([])
+
+async function loadNarratives() {
+    try {
+        const { data } = await getMarketNarratives()
+        narratives.value = data.narratives || []
+    } catch (e) {
+        console.error('叙事分析加载失败', e)
+    }
+}
+
+const narrativesCount = computed(() => narratives.value.length)
+
+const narrativeStageCounts = computed(() => {
+    const counts = {}
+    for (const n of narratives.value) {
+        const stage = n.lifecycle_stage
+        counts[stage] = (counts[stage] || 0) + 1
+    }
+    return counts
+})
+
+function lifecycleColor(stage) {
+    const m = { '萌芽': '#909399', '发酵': '#409eff', '高潮': '#e6a23c', '退潮': '#f56c6c', '证伪': '#909399' }
+    return m[stage] || '#909399'
 }
 
 // ===== 情绪周期 =====
@@ -583,6 +636,8 @@ onMounted(async () => {
     await loadIndexHistory()
     // 加载每日笔记
     await loadDailyNote()
+    // 加载叙事分析
+    await loadNarratives()
 })
 
 // 日期切换时重新加载笔记

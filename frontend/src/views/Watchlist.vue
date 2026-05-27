@@ -360,6 +360,9 @@
                             {{ opt }}
                         </el-tag>
                     </div>
+                    <div style="margin-bottom:8px;">
+                        <el-input v-model="watchlistSearch" placeholder="搜索名称或代码..." size="small" prefix-icon="Search" clearable />
+                    </div>
                     <div v-if="items.length" class="scroll-area">
                         <template v-for="(group, gi) in groupedItems" :key="gi">
                             <!-- 市场标题（首次出现该市场时显示） -->
@@ -528,6 +531,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { getWatchlist, addWatchItem, removeWatchItem, updateWatchItem, getStockProfile, searchStockInfo, saveSnapshot, deleteSnapshot, deleteDraft, addPosition, deletePosition, getPositions, addStockNote, deleteStockNote, getStockReminders, addStockReminder, deleteStockReminder, toggleStockReminder, getAllActiveReminders, predictStockTrend } from '../api/index.js'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Search } from '@element-plus/icons-vue'
 
 const router = useRouter()
 
@@ -539,6 +543,7 @@ const savingSnapshot = ref(false)
 const showAddDialog = ref(false)
 const form = ref({ code: '', name: '', priority: 'medium', reason: '' })
 const searchText = ref('')
+const watchlistSearch = ref('')
 
 // ===== 持仓（对接仓位管理）=====
 const positionsList = ref([])
@@ -608,6 +613,15 @@ const groupedItems = computed(() => {
     const list = items.value || []
     // 过滤
     let filtered = list
+    // 搜索过滤
+    const sq = (watchlistSearch.value || '').trim().toLowerCase()
+    if (sq) {
+        filtered = filtered.filter(i =>
+            (i.code || '').toLowerCase().includes(sq) ||
+            (i.name || '').toLowerCase().includes(sq)
+        )
+    }
+    // 市场过滤
     if (marketFilter.value !== '全部') {
         filtered = list.filter(i => {
             const mkt = (i.market || '').toLowerCase()

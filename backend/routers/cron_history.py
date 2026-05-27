@@ -51,6 +51,12 @@ CRON_TASKS = [
         "schedule": "20:35",
     },
     {
+        "name": "手动计算板块分析",
+        "description": "手动触发指定日期的板块分析全流程（刷新数据+计算周期+AI摘要）",
+        "icon": "🧮",
+        "schedule": "手动",
+    },
+    {
         "name": "思维模型反思",
         "description": "用今日行情自动反思昨日的训练预测",
         "icon": "🧠",
@@ -113,9 +119,24 @@ def run_cron_job(job_name: str):
                 r = {"returncode": -1, "stdout": [], "stderr": [f"脚本不存在: {fetch_script}"]}
 
             if r["returncode"] == 0:
-                msg = "拉取完成"
-                update_cron_log(log_id, "success", msg)
-                result.update({"status": "success", "message": msg})
+                # ✅ 二次验证：检查CSV是否有实际数据行
+                row_count = 0
+                if os.path.exists(today_path):
+                    import csv
+                    with open(today_path, encoding="utf-16", newline="") as f:
+                        reader = csv.reader(f, delimiter="\t")
+                        for i, _ in enumerate(reader):
+                            if i == 0:
+                                continue  # 跳过表头
+                            row_count += 1
+                if row_count == 0:
+                    err = f"脚本退出码0但文件无数据行（{os.path.getsize(today_path)}字节），拉取异常"
+                    update_cron_log(log_id, "failed", err)
+                    result.update({"status": "failed", "message": err})
+                else:
+                    msg = f"拉取完成（{row_count}只股票）"
+                    update_cron_log(log_id, "success", msg)
+                    result.update({"status": "success", "message": msg})
             else:
                 err = "; ".join(r["stderr"][:3])
                 update_cron_log(log_id, "failed", f"拉取失败: {err}")
@@ -124,7 +145,7 @@ def run_cron_job(job_name: str):
 
         elif job_name == "午盘快照":
             fetch_script = str(Path.home() / "Jarvis" / "fetch_a_stock_data.py")
-            # 清理今日空壳文件（akshare失败留下的空headers），否则fetch脚本读不到股票列表
+            # 清理今日空壳文件
             today_str = date.today().isoformat()
             today_close = str(Path.home() / "Jarvis" / "A股行情信息" / f"沪深京A股{today_str}.csv")
             today_noon = str(Path.home() / "Jarvis" / "A股行情信息" / f"沪深京A股{today_str}_noon.csv")
@@ -138,9 +159,25 @@ def run_cron_job(job_name: str):
                 r = {"returncode": -1, "stdout": [], "stderr": [f"脚本不存在: {fetch_script}"]}
 
             if r["returncode"] == 0:
-                msg = "午盘快照完成"
-                update_cron_log(log_id, "success", msg)
-                result.update({"status": "success", "message": msg})
+                # ✅ 二次验证：检查CSV是否有实际数据行
+                noon_path = str(Path.home() / "Jarvis" / "A股行情信息" / f"沪深京A股{today_str}_noon.csv")
+                row_count = 0
+                if os.path.exists(noon_path):
+                    import csv
+                    with open(noon_path, encoding="utf-16", newline="") as f:
+                        reader = csv.reader(f, delimiter="\t")
+                        for i, _ in enumerate(reader):
+                            if i == 0:
+                                continue
+                            row_count += 1
+                if row_count == 0:
+                    err = f"脚本退出码0但无数据行（{os.path.getsize(noon_path) if os.path.exists(noon_path) else 0}字节），拉取异常"
+                    update_cron_log(log_id, "failed", err)
+                    result.update({"status": "failed", "message": err})
+                else:
+                    msg = f"午盘快照完成（{row_count}只股票）"
+                    update_cron_log(log_id, "success", msg)
+                    result.update({"status": "success", "message": msg})
             else:
                 err = "; ".join(r["stderr"][:3])
                 update_cron_log(log_id, "failed", f"快照失败: {err}")
@@ -260,6 +297,27 @@ def run_cron_job(job_name: str):
                     msg += f" | 最新分析为{latest_date}"
                 update_cron_log(log_id, "failed", msg)
                 result.update({"status": "failed", "message": msg})
+
+        elif job_name == "手动计算板块分析":
+            from backend.routers.mental_models import refresh_sector_dispersion, compute_sector_cycles
+            today_str = date.today().isoformat()
+            steps = []
+            try:
+                refresh_result = refresh_sector_dispersion(today_str)
+                steps.append(f"分散度{refresh_result.get('sectors',0)}个板块")
+            except Exception as e:
+                err = f"分散度刷新失败: {e}"
+                update_cron_log(log_id, "failed", err)
+                result.update({"status": "failed", "message": err})
+                return result
+            try:
+                cycle_result = compute_sector_cycles(today_str)
+                steps.append(f"周期相位{cycle_result.get('sectors',0)}个板块")
+            except Exception as e:
+                steps.append(f"周期计算跳过({e})")
+            msg = " | ".join(steps) + " ✅"
+            update_cron_log(log_id, "success", msg)
+            result.update({"status": "success", "message": msg})
 
         elif job_name == "思维模型反思":
             from backend.routers.mental_models import auto_reflect_all

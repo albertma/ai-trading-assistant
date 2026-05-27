@@ -476,3 +476,356 @@ def refresh_market_data(date_param: str = Query(None, description="日期 YYYY-M
         return {"status": "error", "date": date_param, "message": "数据拉取超时（>5分钟）"}
     except Exception as e:
         return {"status": "error", "date": date_param, "message": str(e)}
+
+
+# ===== 叙事分析 =====
+
+@router.get("/narratives")
+def market_narratives(
+    date: str = Query(None, description="日期 YYYY-MM-DD，不传则取最新"),
+    refresh: bool = Query(False, description="强制重新AI分析"),
+):
+    """AI动态发现市场叙事主题，定位生命周期阶段，追踪证实/证伪信号"""
+    from backend.services.analyze.narrative import (
+        get_cached_narratives, analyze_narratives, get_market_snapshot,
+        get_saved_narratives, get_available_dates,
+    )
+
+    if refresh:
+        from backend.services.analyze.narrative import _narrative_cache
+        _narrative_cache.clear()
+
+    if date:
+        # 指定日期：先看DB，没有再尝试AI分析
+        saved = get_saved_narratives(date)
+        if saved and not refresh:
+            sn = get_market_snapshot(date)
+            return {
+                "status": "ok",
+                "date": date,
+                "total_stocks": sn["total_stocks"] if sn else None,
+                "market_avg_change": sn["avg_change"] if sn else None,
+                "narratives": saved,
+                "cached": True,
+            }
+        # 尝试分析指定日期的数据
+        sn = get_market_snapshot(date)
+        if not sn:
+            return {
+                "status": "no_data",
+                "message": f"{date} 无行情数据",
+                "narratives": [],
+                "date": date,
+            }
+        narratives = analyze_narratives(sn, force_date=date)
+        return {
+            "status": "ok",
+            "date": date,
+            "total_stocks": sn.get("total_stocks"),
+            "market_avg_change": sn.get("avg_change"),
+            "narratives": narratives,
+            "cached": False,
+        }
+
+    # 不传日期：取最新数据
+    snapshot = get_market_snapshot()
+    if snapshot is None:
+        return {
+            "status": "no_data",
+            "message": "无行情数据",
+            "narratives": [],
+            "date": None,
+        }
+    narratives = get_cached_narratives(snapshot["date"])
+    return {
+        "status": "ok",
+        "date": snapshot.get("date"),
+        "total_stocks": snapshot.get("total_stocks"),
+        "market_avg_change": snapshot.get("avg_change"),
+        "narratives": narratives,
+        "cached": True,
+    }
+
+
+@router.get("/narratives/dates")
+def narrative_available_dates():
+    """获取有叙事分析数据的日期列表"""
+    from backend.services.analyze.narrative import get_available_dates
+    return {"dates": get_available_dates()}
+
+
+# ══════════════════════════════════════════════════
+# 深度推演 —— 跨叙事交叉分析
+# ══════════════════════════════════════════════════
+
+DEEP_ANALYSIS_PROMPT = """你是一位深度市场叙事分析师。你的任务是基于以下今日的叙事分析数据，撰写一份跨叙事的推演分析报告。
+
+现有叙事数据（JSON格式）：
+{narratives_json}
+
+市场概况：平均涨跌 {avg_change}%，总股票数 {total_stocks}
+
+请分析并返回以下 JSON 结构（不要任何其他内容，只返回JSON）：
+
+```json
+{{
+  "core_contradiction": {{
+    "title": "核心矛盾一句话标题",
+    "analysis": "深度分析核心矛盾所在，约200-300字",
+    "severity": "high/medium/low",
+    "key_numbers": ["关键数据点1", "关键数据点2", "关键数据点3"]
+  }},
+  "sector_deep_dives": [
+    {{
+      "name": "板块/叙事名称",
+      "insight": "超越表层数据的深度洞察，约100-150字",
+      "verdict": "bullish/bearish/mixed",
+      "key_metrics": ["关键指标1", "关键指标2"]
+    }}
+  ],
+  "critical_questions": [
+    {{
+      "question": "质疑性问题",
+      "counter_analysis": "如果市场看错了，会是什么情况？约80-120字",
+      "risk_level": "high/medium/low"
+    }}
+  ],
+  "watchlist": [
+    {{
+      "signal": "观察指标",
+      "what_to_watch": "具体看什么",
+      "implication": "如果成立意味着什么"
+    }}
+  ],
+  "bottom_line": "最终结论，约150字，简洁有力"
+}}
+```
+"""
+
+
+@router.post("/narratives/deep-analysis")
+def generate_deep_narrative_analysis(
+    date_str: str = Query(None, alias="date", description="日期 YYYY-MM-DD"),
+):
+    """跨叙事深度推演分析——超越单个叙事，发现结构矛盾与关键质疑"""
+    from backend.services.analyze.narrative import (
+        get_saved_narratives, get_market_snapshot, get_available_dates,
+    )
+    import json, os, sqlite3
+
+    ARCHIVE_DB = os.path.expanduser("~/Jarvis/ai_trading/stock_archive.db")
+
+    target_date = date_str or date.today().isoformat()
+
+    # 检查是否已有缓存
+    conn = sqlite3.connect(ARCHIVE_DB)
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS narratives_deep_analysis (
+            date TEXT PRIMARY KEY,
+            analysis TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        )
+    """)
+    row = conn.execute("SELECT analysis FROM narratives_deep_analysis WHERE date = ?", (target_date,)).fetchone()
+    if row:
+        conn.close()
+        return {"status": "ok", "date": target_date, "analysis": json.loads(row["analysis"]), "cached": True}
+
+    # 获取今日叙事数据
+    narratives = get_saved_narratives(target_date)
+    snapshot = get_market_snapshot(target_date)
+
+    if not narratives:
+        conn.close()
+        return {"status": "error", "message": f"{target_date} 无叙事数据，请先生成叙事分析", "analysis": None}
+
+    avg_change = snapshot["avg_change"] if snapshot else 0
+    total = snapshot["total_stocks"] if snapshot else 0
+
+    # 调用 AI 进行深度分析
+    try:
+        from openai import OpenAI
+        from pathlib import Path
+        import yaml
+        config_path = Path.home() / ".hermes" / "config.yaml"
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        providers = cfg.get("custom_providers", [])
+        api_key = ""
+        base_url = "https://api.deepseek.com"
+        for p in providers:
+            if p.get("name") == "deepseek-v4-flash":
+                api_key = p["api_key"]
+                base_url = p["base_url"]
+                break
+        if not api_key:
+            api_key = cfg.get("model", {}).get("api_key", "")
+            base_url = cfg.get("model", {}).get("base_url", "https://api.deepseek.com")
+
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        prompt = DEEP_ANALYSIS_PROMPT.format(
+            narratives_json=json.dumps(narratives, ensure_ascii=False, indent=2),
+            avg_change=avg_change,
+            total_stocks=total,
+        )
+        resp = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=4000,
+        )
+        content = resp.choices[0].message.content.strip()
+        # 提取 JSON
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+        analysis = json.loads(content)
+    except Exception as e:
+        conn.close()
+        return {"status": "error", "message": f"AI深度分析失败: {str(e)}", "analysis": None}
+
+    # 保存到 DB
+    conn.execute(
+        "INSERT OR REPLACE INTO narratives_deep_analysis (date, analysis) VALUES (?, ?)",
+        (target_date, json.dumps(analysis, ensure_ascii=False)),
+    )
+    conn.commit()
+    conn.close()
+
+    return {"status": "ok", "date": target_date, "analysis": analysis, "cached": False}
+
+
+# ── 关键人物 & 言论 ─────────────────────────────────
+
+
+@router.get("/people")
+def list_people(market: str = Query("all", description="us/cn/crypto/all")):
+    """获取关键人物列表"""
+    from backend.services.analyze.person_tracker import get_key_people
+    return {"people": get_key_people(market)}
+
+
+@router.get("/people/statements")
+def list_statements(
+    market: str = Query("all", description="us/cn/crypto/all"),
+    days: int = Query(3, description="回溯天数"),
+    limit: int = Query(30, description="返回条数"),
+    person_id: int = Query(None, description="按人物ID筛选"),
+):
+    """获取近期关键人物言论"""
+    from backend.services.analyze.person_tracker import get_statements
+    return {"statements": get_statements(market, days, limit, person_id)}
+
+
+@router.post("/people/dedup")
+def dedup_statements():
+    """手动触发言论去重"""
+    from backend.services.analyze.person_tracker import deduplicate_statements
+    result = deduplicate_statements(days=30)
+    return {"status": "ok", **result}
+
+
+@router.get("/people/statement-narratives")
+def statement_narratives(
+    market: str = Query("all", description="us/cn/crypto/all"),
+    days: int = Query(7, description="回溯天数"),
+):
+    """基于言论含义分析叙事主题和相关资产"""
+    from backend.services.analyze.person_tracker import get_statements
+    stmts = get_statements(market, days, limit=100)
+
+    # 按 topic 分组
+    from collections import defaultdict
+    topic_groups = defaultdict(lambda: {"statements": [], "tickers": set(), "people": set()})
+    for s in stmts:
+        topics = s.get("related_topics", "").split(",")
+        if not topics or topics == [""]:
+            topics = ["未分类"]
+        for t in topics:
+            t = t.strip()
+            if not t:
+                continue
+            topic_groups[t]["statements"].append(s)
+            for tk in s.get("related_tickers", "").split(","):
+                tk = tk.strip()
+                if tk:
+                    topic_groups[t]["tickers"].add(tk)
+            topic_groups[t]["people"].add(s["person_name"])
+
+    narratives = []
+    for topic, data in topic_groups.items():
+        # 排序言论按日期
+        data["statements"].sort(key=lambda x: x["statement_date"], reverse=True)
+        # 计算情绪倾向
+        pos = sum(1 for s in data["statements"] if s["sentiment"] == "positive")
+        neg = sum(1 for s in data["statements"] if s["sentiment"] == "negative")
+        narratives.append({
+            "topic": topic,
+            "statement_count": len(data["statements"]),
+            "sentiment_ratio": {
+                "positive": pos,
+                "negative": neg,
+                "neutral": len(data["statements"]) - pos - neg,
+            },
+            "tickers": sorted(data["tickers"])[:10],
+            "people": sorted(data["people"]),
+            "latest_statements": data["statements"][:5],
+        })
+
+    narratives.sort(key=lambda x: -x["statement_count"])
+    return {"narratives": narratives}
+
+
+@router.post("/people/statements")
+def add_statement(
+    person_id: int = Query(...),
+    market: str = Query(...),
+    source: str = Query("manual"),
+    statement: str = Query(...),
+    sentiment: str = Query("neutral"),
+    related_tickers: str = Query(""),
+    related_topics: str = Query(""),
+    source_url: str = Query(""),
+    statement_date: str = Query(None),
+):
+    """手动添加一条人物言论"""
+    from backend.services.analyze.person_tracker import save_statement
+    sid = save_statement(person_id, market, source, statement,
+                          sentiment, related_tickers, related_topics,
+                          source_url, statement_date)
+    return {"id": sid, "status": "ok"}
+
+
+@router.post("/people/init")
+def init_people_data():
+    """初始化关键人物种子数据"""
+    from backend.services.analyze.person_tracker import init_people
+    init_people()
+    return {"status": "ok", "message": "关键人物数据已初始化"}
+
+
+@router.post("/people/fetch-news")
+def fetch_news():
+    """手动触发抓取关键人物最新新闻言论（替代 X/Twitter）"""
+    from backend.services.analyze.news_fetcher import run_once
+    result = run_once()
+    return result
+
+
+@router.get("/people/check-network")
+def check_network():
+    """检查网络连接（Google News RSS 是否可达）"""
+    from backend.services.analyze.news_fetcher import is_available
+    return {"available": is_available()}
+
+
+@router.get("/people/summary")
+def person_summary(
+    market: str = Query("all", description="us/cn/crypto/all"),
+    days: int = Query(7, description="回溯天数"),
+):
+    """按人物汇总近期言论分析"""
+    from backend.services.analyze.person_tracker import get_person_summary
+    return {"summary": get_person_summary(market, days)}

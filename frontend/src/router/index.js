@@ -13,6 +13,8 @@ import KnowledgeGraph from '../views/KnowledgeGraph.vue'
 import MentalModels from '../views/MentalModels.vue'
 import SectorAnalysis from '../views/SectorAnalysis.vue'
 import CronHistory from '../views/CronHistory.vue'
+import Narratives from '../views/Narratives.vue'
+import NewsOverview from '../views/NewsOverview.vue'
 
 const routes = [
     { path: '/', name: 'Dashboard', component: Dashboard, meta: { title: '市场概览', icon: 'DataAnalysis' } },
@@ -29,6 +31,8 @@ const routes = [
     { path: '/mental-models', name: 'MentalModels', component: MentalModels, meta: { title: '模型库', icon: 'Platform' } },
     { path: '/mental-training', name: 'MentalTraining', component: () => import('../views/MentalTraining.vue'), meta: { title: '每日模型训练', icon: 'TrendCharts' } },
     { path: '/cron-history', name: 'CronHistory', component: CronHistory, meta: { title: 'Cron任务', icon: 'Timer' } },
+    { path: '/narratives', name: 'Narratives', component: Narratives, meta: { title: '叙事分析', icon: 'TrendCharts' } },
+    { path: '/news-overview', name: 'NewsOverview', component: NewsOverview, meta: { title: '新闻分析', icon: 'Reading' } },
 ]
 
 const router = createRouter({

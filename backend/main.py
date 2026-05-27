@@ -8,13 +8,24 @@ from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 
 from backend.config import HOST, PORT, DEBUG
-from backend.routers import market, positions, analysis, risk, reports, fundamental, profile, watchlist, chat, stock_info, risk_rules, knowledge_graph, mental_models, predict, cron_history
+from backend.routers import market, positions, analysis, risk, reports, fundamental, profile, watchlist, chat, stock_info, risk_rules, knowledge_graph, mental_models, predict, cron_history, news_overview
 
 app = FastAPI(
     title="AI投研助手",
     description="金融AI投研助理 — 复盘、持仓、分析、风控",
     version="0.1.0",
 )
+
+
+@app.on_event("startup")
+def startup():
+    """启动时初始化关键人物数据"""
+    try:
+        from backend.services.analyze.person_tracker import init
+        init()
+        print("[person_tracker] 关键人物数据已初始化", flush=True)
+    except Exception as e:
+        print(f"[person_tracker] 初始化失败: {e}", flush=True)
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,6 +51,7 @@ app.include_router(knowledge_graph.router, prefix="/api/v1/kg", tags=["知识图
 app.include_router(mental_models.router, prefix="/api/v1/mental", tags=["思维模型"])
 app.include_router(predict.router, prefix="/api/v1/predict", tags=["AI预测"])
 app.include_router(cron_history.router, prefix="/api/v1", tags=["Cron历史"])
+app.include_router(news_overview.router, prefix="/api/v1", tags=["新闻聚合"])
 
 @app.get("/health")
 def health():

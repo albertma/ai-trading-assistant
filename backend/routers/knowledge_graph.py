@@ -1,10 +1,10 @@
 """知识图谱 API — 基于本体的实体提取与关系发现"""
 
 from fastapi import APIRouter, HTTPException
-import sqlite3, json, os, re
+import sqlite3, json, os, re, requests as _requests
 from datetime import datetime
 from backend.services.financial_service import get_concept_board_data
-import requests as _requests
+from typing import Optional
 
 DB_PATH = os.path.expanduser("~/Jarvis/ai_trading/stock_archive.db")
 
@@ -39,6 +39,16 @@ def _init_db():
             relation TEXT,
             count INTEGER DEFAULT 1,
             PRIMARY KEY (source, target, relation)
+        );
+        CREATE TABLE IF NOT EXISTS kg_tracked_topics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic_name TEXT NOT NULL UNIQUE,
+            keywords TEXT NOT NULL DEFAULT '',
+            description TEXT DEFAULT '',
+            priority TEXT DEFAULT 'medium',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            last_checked TEXT,
+            enabled INTEGER DEFAULT 1
         );
     """)
     # 兼容旧表: 如果 entity_type 列不存在则添加
@@ -109,6 +119,11 @@ PRODUCT_KEYWORDS = [
     "算法", "大模型", "MLOps", "EDA",
     "液冷", "散热", "电源",
     "镜头", "模组", "屏幕", "面板",
+    # HVDC / 电力基础设施
+    "高压直流", "HVDC", "直流变压器", "固态变压器", "配电变压器",
+    "GaN", "氮化镓", "SiC", "碳化硅", "宽禁带半导体",
+    "电源柜", "PDU", "BBU", "超级电容", "备用电源",
+    "铜排", "母线", "电力架构", "微电网",
 ]
 
 # 产业链环节关键词
@@ -124,6 +139,25 @@ KNOWN_ORGS = {
     "NVIDIA": "芯片", "AMD": "芯片", "Intel": "芯片", "ARM": "芯片",
     "英伟达": "芯片", "特斯拉": "新能源汽车",
     "地平线": "AI", "燧原科技": "芯片", "壁仞科技": "芯片", "摩尔线程": "芯片",
+    # HVDC / 电力 / 数据中心基础设施
+    "Eaton": "电力设备", "伊顿": "电力设备", "伊顿公司": "电力设备",
+    "Vertiv": "电力设备", "维谛": "电力设备", "维谛技术": "电力设备",
+    "Infineon": "半导体", "英飞凌": "半导体",
+    "Navitas": "半导体", "纳微半导体": "半导体",
+    "Delta": "电力设备", "台达": "电力设备", "台达电子": "电力设备",
+    "ABB": "电力设备", "Hitachi Energy": "电力设备",
+    "Siemens Energy": "电力设备", "GE Vernova": "电力设备",
+    "Schneider": "电力设备", "施耐德": "电力设备",
+    "Enphase": "电力设备", "Enphase Energy": "电力设备",
+    "onsemi": "半导体", "安森美": "半导体",
+    "Power Integrations": "半导体", "PI": "半导体",
+    "Heron Power": "电力设备",
+    "特斯拉": "新能源汽车",
+    "麦格米特": "电力设备", "金盘科技": "电力设备", "英诺赛科": "半导体",
+    "三安光电": "半导体", "士兰微": "半导体",
+    "江海股份": "电子元件", "蔚蓝锂芯": "电池", "优优绿能": "电力设备",
+    "盛弘股份": "电力设备", "禾望电气": "电力设备",
+    "中国西电": "电力设备", "思源电气": "电力设备", "伊戈尔": "电力设备", "特变电工": "电力设备",
 }
 
 # ─── 实体提取 ────────────────────────────────────────────
@@ -774,3 +808,248 @@ def get_stats():
     rows = c.fetchall()
     conn.close()
     return {"success": True, "data": {r[0]: {"entities": r[1], "total_mentions": r[2]} for r in rows}}
+
+
+# ─── 产业链结构化分析 API ────────────────────────────────
+
+@router.get("/articles/{aid}/chain")
+def get_article_chain(aid: int):
+    """将知识图谱文章提取为产业链层级结构"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, title, content, entities, relations, summary FROM kg_articles WHERE id=?", (aid,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "文章不存在")
+
+    title, content, entities_json, relations_json, summary = row[1], row[2] or "", row[3] or "[]", row[4] or "[]", row[5] or ""
+    entities = json.loads(entities_json)
+    relations = json.loads(relations_json)
+
+    companies = [e for e in entities if e["entity_type"] == "company"]
+    concepts = [e["name"] for e in entities if e["entity_type"] == "concept"]
+    products = [e["name"] for e in entities if e["entity_type"] == "product"]
+    industries = [e["name"] for e in entities if e["entity_type"] == "industry"]
+
+    # --- 从文章内容和标头推断产业链方向 ---
+    # 1. 方向/环节关键词
+    direction_keywords = {
+        "变压器": ["变压器", "特变电工", "金盘科技", "中国西电", "思源电气", "伊戈尔", "Eaton", "伊顿", "Heron", "Enphase", "固态变压器", "配电变压器", "GSU"],
+        "宽禁带半导体": ["GaN", "氮化镓", "SiC", "碳化硅", "宽禁带", "Infineon", "英飞凌", "Navitas", "英诺赛科", "三安光电", "士兰微", "onsemi", "Power Integrations"],
+        "独立电源柜": ["电源柜", "PDU", "BBU", "Vertiv", "维谛", "Delta", "台达", "麦格米特", "服务器电源", "备电"],
+        "跨界玩家": ["跨界", "汽车", "充电", "麦格米特", "江海股份", "蔚蓝锂芯", "优优绿能", "盛弘股份", "禾望电气", "超级电容", "BBU"],
+    }
+
+    # 2. 核心叙事/因果链 (from content)
+    narrative_chain = [
+        {"id": "driver", "label": "🚀 核心驱动", "desc": "GPU功率密度上升\n1MW/机柜 → 54V撑不住", "color": "#e74c3c"},
+        {"id": "shift", "label": "⚡ 范式转移", "desc": "800V HVDC 取代 54V\n效率92-96% TCO降30%", "color": "#e67e22"},
+        {"id": "bottleneck", "label": "🔴 方向一\n变压器", "desc": "瓶颈 = 台积电角色\n交期143周 缺口100%", "color": "#e74c3c"},
+        {"id": "engine", "label": "🟢 方向二\n宽禁带半导体", "desc": "发动机\nGaN高频+SiC高压", "color": "#27ae60"},
+        {"id": "cabinet", "label": "🔵 方向三\n独立电源柜", "desc": "电源搬出机柜\n单柜价值$21.6万", "color": "#2980b9"},
+        {"id": "crossover", "label": "🟡 方向四\n跨界玩家", "desc": "汽车产业链铺好的路\n800V底层同构", "color": "#f39c12"},
+    ]
+
+    # 3. 按方向分配公司
+    direction_companies = {k: [] for k in direction_keywords}
+    assigned = set()
+    for comp in companies:
+        cname = comp["name"]
+        for direction, kws in direction_keywords.items():
+            if any(kw.lower() in cname.lower() or cname.lower() in kw.lower() for kw in kws):
+                direction_companies[direction].append(comp)
+                assigned.add(cname)
+                break
+
+    # 4. 产品/概念归集到各方向
+    direction_products = {}
+    for direction, kws in direction_keywords.items():
+        prods = []
+        for p in products:
+            if any(kw.lower() in p.lower() for kw in kws):
+                prods.append(p)
+        direction_products[direction] = prods[:5]
+
+    # 5. 方向间的关联关系 (因果箭头)
+    chain_links = [
+        {"from": "driver", "to": "shift", "label": "物理瓶颈倒逼"},
+        {"from": "shift", "to": "bottleneck", "label": "800V需要新变压器"},
+        {"from": "shift", "to": "engine", "label": "800V需要GaN/SiC"},
+        {"from": "bottleneck", "to": "cabinet", "label": "电源被迫外置"},
+        {"from": "shift", "to": "crossover", "label": "汽车技术已铺路"},
+    ]
+
+    return {"success": True, "data": {
+        "title": title,
+        "summary": summary,
+        "narrative_chain": narrative_chain,
+        "chain_links": chain_links,
+        "directions": [
+            {
+                "id": "bottleneck", "label": "🔴 变压器",
+                "desc": "链条中的台积电 — 全产业链最大瓶颈",
+                "color": "#e74c3c",
+                "companies": [
+                    {"name": c["name"], "code": c.get("code", ""), "category": c.get("category", ""),
+                     "source": c.get("source", ""),
+                     "is_key": c.get("code", "") in ["600089", "688676", "601179", "002028", "002922"]}
+                    for c in direction_companies.get("变压器", [])
+                ],
+                "products": direction_products.get("变压器", []),
+                "market_size": "变压器缺口100%，交期143周，单价+77%",
+                "risk_level": "低",
+            },
+            {
+                "id": "engine", "label": "🟢 宽禁带半导体",
+                "desc": "链条的发动机 — GaN高频 + SiC高压",
+                "color": "#27ae60",
+                "companies": [
+                    {"name": c["name"], "code": c.get("code", ""), "category": c.get("category", ""),
+                     "source": c.get("source", ""),
+                     "is_key": c.get("code", "") in ["600703", "600460"] or not c.get("code", "")}
+                    for c in direction_companies.get("宽禁带半导体", [])
+                ],
+                "products": direction_products.get("宽禁带半导体", []),
+                "market_size": "Infineon AI电源收入3年3.5x(7→25亿€)",
+                "risk_level": "中",
+            },
+            {
+                "id": "cabinet", "label": "🔵 独立电源柜",
+                "desc": "电源得搬出来 — 单柜价值翻数倍",
+                "color": "#2980b9",
+                "companies": [
+                    {"name": c["name"], "code": c.get("code", ""), "category": c.get("category", ""),
+                     "source": c.get("source", ""),
+                     "is_key": c.get("code", "") in ["002851"] or not c.get("code", "")}
+                    for c in direction_companies.get("独立电源柜", [])
+                ],
+                "products": direction_products.get("独立电源柜", []),
+                "market_size": "单柜$21.6万 = GB200时代的数倍",
+                "risk_level": "中",
+            },
+            {
+                "id": "crossover", "label": "🟡 跨界玩家",
+                "desc": "汽车产业链铺好的路 — 800V同构",
+                "color": "#f39c12",
+                "companies": [
+                    {"name": c["name"], "code": c.get("code", ""), "category": c.get("category", ""),
+                     "source": c.get("source", ""),
+                     "is_key": c.get("code", "") in ["002851", "002484", "002245", "301590", "300693", "603063"]}
+                    for c in direction_companies.get("跨界玩家", [])
+                ],
+                "products": direction_products.get("跨界玩家", []),
+                "market_size": "中国800V渗透率6.9%→9.5%(CAGR 270%)",
+                "risk_level": "高",
+            },
+        ],
+        "timeline": [
+            {"date": "2026 H1", "event": "GB300量产（最后一代54V）", "status": "current"},
+            {"date": "2026 H2", "event": "Rubin VR200投产 → 800V首次试水", "status": "upcoming"},
+            {"date": "2027 H2", "event": "Rubin Ultra Kyber → 800V整柜标配", "status": "upcoming"},
+            {"date": "2028+", "event": "800V成为行业标准, 放量阶段", "status": "future"},
+        ],
+        "entity_count": len(entities),
+        "relation_count": len(relations),
+    }}
+
+
+# ─── 追踪主题 API ────────────────────────────────────────
+
+@router.get("/tracked")
+def list_tracked():
+    """列出所有追踪中的投资主题"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, topic_name, keywords, description, priority, created_at, last_checked, enabled FROM kg_tracked_topics ORDER BY priority, created_at DESC")
+    rows = c.fetchall()
+    conn.close()
+    return {"success": True, "data": [{
+        "id": r[0], "topic_name": r[1], "keywords": r[2],
+        "description": r[3], "priority": r[4],
+        "created_at": r[5], "last_checked": r[6], "enabled": bool(r[7])
+    } for r in rows]}
+
+
+@router.post("/tracked")
+def add_tracked(body: dict):
+    """添加追踪主题"""
+    topic = body.get("topic_name", "").strip()
+    if not topic:
+        raise HTTPException(400, "主题名不能为空")
+    keywords = body.get("keywords", topic)
+    description = body.get("description", "")
+    priority = body.get("priority", "medium")
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO kg_tracked_topics (topic_name, keywords, description, priority) VALUES (?,?,?,?)",
+                  (topic, keywords, description, priority))
+        conn.commit()
+        tid = c.lastrowid
+        return {"success": True, "msg": f"✅ 已添加追踪主题 [{topic}]", "id": tid}
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, f"主题 [{topic}] 已存在")
+    finally:
+        conn.close()
+
+
+@router.delete("/tracked/{tid}")
+def remove_tracked(tid: int):
+    """删除追踪主题"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM kg_tracked_topics WHERE id=?", (tid,))
+    deleted = c.rowcount
+    conn.commit()
+    conn.close()
+    if not deleted:
+        raise HTTPException(404, "主题不存在")
+    return {"success": True, "msg": "🗑️ 已取消追踪"}
+
+
+@router.put("/tracked/{tid}/check")
+def update_tracked_check(tid: int):
+    """更新上次检查时间"""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE kg_tracked_topics SET last_checked=? WHERE id=?", (now, tid))
+    conn.commit()
+    conn.close()
+    return {"success": True, "msg": f"⏰ 检查时间已更新: {now}"}
+
+
+@router.get("/tracked/check-news")
+def check_tracked_news():
+    """检查所有已启用的追踪主题的最新新闻（基于Google News RSS）"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, topic_name, keywords FROM kg_tracked_topics WHERE enabled=1")
+    topics = c.fetchall()
+    conn.close()
+
+    results = []
+    import urllib.request, urllib.parse
+    for tid, tname, kws in topics:
+        query = kws or tname
+        try:
+            url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=zh-CN&gl=CN"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            resp = urllib.request.urlopen(req, timeout=10)
+            html = resp.read().decode("utf-8", errors="replace")
+            # 简单解析标题
+            import re as _re
+            titles = _re.findall(r"<title>(.+?)</title>", html)[:5]
+            # 更新检查时间
+            now = datetime.now().strftime("%Y-%m-%d %H:%M")
+            conn2 = sqlite3.connect(DB_PATH)
+            c2 = conn2.cursor()
+            c2.execute("UPDATE kg_tracked_topics SET last_checked=? WHERE id=?", (now, tid))
+            conn2.commit()
+            conn2.close()
+            results.append({"topic": tname, "news": titles[1:] if len(titles) > 1 else [], "count": len(titles) - 1})
+        except Exception as e:
+            results.append({"topic": tname, "news": [], "error": str(e)})
+
+    return {"success": True, "data": results}

@@ -48,7 +48,13 @@
             <el-card class="graph-card" shadow="never">
                 <template #header>
                     <div class="graph-header">
-                        <span>{{ graphTitle }}</span>
+                        <div class="graph-header-left">
+                            <span>{{ graphTitle }}</span>
+                            <el-radio-group v-model="viewMode" size="small" style="margin-left:16px" @change="onViewModeChange">
+                                <el-radio-button value="graph">🗺️ 图谱</el-radio-button>
+                                <el-radio-button value="chain" :disabled="!currentArticleId && !showAggregated">🔗 产业链</el-radio-button>
+                            </el-radio-group>
+                        </div>
                         <div class="graph-actions">
                             <span class="stat-badge">实体: {{ currentEntities.length }}</span>
                             <span class="stat-badge">关系: {{ currentRelations.length }}</span>
@@ -67,7 +73,9 @@
                         </div>
                     </div>
                 </template>
-                <div class="graph-body" v-loading="graphLoading">
+
+                <!-- 图谱视图 -->
+                <div v-show="viewMode === 'graph'" class="graph-body" v-loading="graphLoading">
                     <!-- 图谱 -->
                     <div ref="chartRef" class="chart-container" :class="{ 'with-panel': showSummary }"></div>
                     <el-empty v-if="!currentEntities.length && !graphLoading" description="粘贴文章后点击「提取图谱」" :image-size="80" />
@@ -93,6 +101,64 @@
                             <div v-else class="summary-content" v-html="renderedSummary"></div>
                         </div>
                     </div>
+                </div>
+
+                <!-- 产业链视图 -->
+                <div v-show="viewMode === 'chain'" class="chain-body" v-loading="chainLoading">
+                    <div v-if="chainData" class="chain-content">
+                        <!-- 因果链 -->
+                        <div class="chain-narrative">
+                            <div v-for="(n, i) in chainData.narrative_chain" :key="n.id"
+                                class="narrative-node"
+                                :style="{ borderLeftColor: n.color }"
+                                @click="chainHighlight = n.id">
+                                <div class="narrative-arrow" v-if="i > 0">⬇</div>
+                                <div class="narrative-label" :style="{ color: n.color }">{{ n.label }}</div>
+                                <div class="narrative-desc">{{ n.desc }}</div>
+                            </div>
+                        </div>
+
+                        <!-- 四大方向 -->
+                        <div class="chain-directions">
+                            <div v-for="dir in chainData.directions" :key="dir.id"
+                                class="direction-card"
+                                :class="{ highlighted: chainHighlight === dir.id }"
+                                :style="{ borderTopColor: dir.color }">
+                                <div class="dir-header" :style="{ color: dir.color }">
+                                    <span class="dir-label">{{ dir.label }}</span>
+                                    <el-tag :type="dir.risk_level === '低' ? 'success' : dir.risk_level === '中' ? 'warning' : 'danger'" size="small" effect="plain">{{ dir.risk_level }}风险</el-tag>
+                                </div>
+                                <div class="dir-desc">{{ dir.desc }}</div>
+                                <div class="dir-market">{{ dir.market_size }}</div>
+                                <div class="dir-companies">
+                                    <div v-for="comp in dir.companies" :key="comp.name" class="chain-company"
+                                        :class="{ 'is-key': comp.is_key }">
+                                        <span class="comp-name">{{ comp.name }}</span>
+                                        <span v-if="comp.code" class="comp-code">{{ comp.code }}</span>
+                                        <span v-if="!comp.code" class="comp-tag">美股/未上市</span>
+                                    </div>
+                                </div>
+                                <div v-if="dir.products.length" class="dir-products">
+                                    <el-tag v-for="p in dir.products" :key="p" size="small" effect="plain" style="margin:2px">{{ p }}</el-tag>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 时间线 -->
+                        <div class="chain-timeline">
+                            <div class="timeline-title">⏰ 催化时间线</div>
+                            <div class="timeline-steps">
+                                <div v-for="(t, i) in chainData.timeline" :key="i"
+                                    class="timeline-step"
+                                    :class="t.status">
+                                    <div class="tl-dot" :class="t.status"></div>
+                                    <div class="tl-date">{{ t.date }}</div>
+                                    <div class="tl-event">{{ t.event }}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <el-empty v-else description="请先选择一篇文章" :image-size="60" />
                 </div>
 
                 <!-- 实体详情（图谱卡片底部） -->
@@ -137,6 +203,12 @@ const summaryBackup = ref('')
 const graphTitle = ref('知识图谱')
 const isSaved = ref(false)
 const showAggregated = ref(false)
+
+// 产业链视图
+const viewMode = ref('graph')
+const chainLoading = ref(false)
+const chainData = ref(null)
+const chainHighlight = ref('')
 
 const chartRef = ref(null)
 let chartInstance = null
@@ -289,6 +361,7 @@ async function loadArticle(id) {
     showSummary.value = true
     summaryEditing.value = false
     graphLoading.value = true
+    viewMode.value = 'graph'
     try {
         const resp = await fetch(`${API}/articles/${id}`)
         const data = await resp.json()
@@ -302,6 +375,8 @@ async function loadArticle(id) {
         isSaved.value = true
         await nextTick()
         renderGraph()
+        // 后台预加载产业链数据
+        loadChainData(id)
     } catch (e) {
         ElMessage.error('加载失败: ' + e.message)
     } finally {
@@ -352,6 +427,29 @@ async function deleteArticle() {
     } catch (e) {
         if (e !== 'cancel') ElMessage.error('删除失败')
     }
+}
+
+// ─── 产业链视图 ────────────────────────────────
+async function loadChainData(id) {
+    chainLoading.value = true
+    try {
+        const resp = await fetch(`${API}/articles/${id}/chain`)
+        const data = await resp.json()
+        if (data.success) chainData.value = data.data
+    } catch (e) {
+        console.error('加载产业链数据失败:', e)
+    } finally {
+        chainLoading.value = false
+    }
+}
+
+function onViewModeChange(mode) {
+    if (mode === 'chain' && !chainData.value && currentArticleId.value) {
+        loadChainData(currentArticleId.value)
+    }
+    nextTick(() => {
+        if (mode === 'graph' && chartInstance) chartInstance.resize()
+    })
 }
 
 function renderGraph() {
@@ -490,6 +588,136 @@ function renderGraph() {
     font-weight: normal;
     font-size: 12px;
 }
+
+.graph-header-left {
+    display: flex;
+    align-items: center;
+    gap: 0;
+}
+
+/* ─── 产业链视图 ─── */
+.chain-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    min-height: 0;
+}
+.chain-content {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    max-width: 1200px;
+}
+
+/* 因果链横向排列 */
+.chain-narrative {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 16px;
+    background: #fafafa;
+    border-radius: 8px;
+    border: 1px solid #ebeef5;
+}
+.narrative-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 14px;
+    border-left: 4px solid #409eff;
+    background: #fff;
+    border-radius: 6px;
+    min-width: 100px;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.narrative-node:hover { transform: translateY(-2px); box-shadow: 0 3px 8px rgba(0,0,0,0.1); }
+.narrative-arrow { font-size: 18px; color: #909399; margin-bottom: 4px; }
+.narrative-label { font-weight: 700; font-size: 13px; text-align: center; white-space: pre-line; }
+.narrative-desc { font-size: 11px; color: #909399; margin-top: 3px; text-align: center; white-space: pre-line; }
+
+/* 四大方向卡片 */
+.chain-directions {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+}
+.direction-card {
+    background: #fff;
+    border: 1px solid #ebeef5;
+    border-radius: 8px;
+    border-top: 3px solid #409eff;
+    padding: 12px;
+    transition: all 0.2s;
+}
+.direction-card.highlighted { box-shadow: 0 0 0 2px rgba(64,158,255,0.3); transform: scale(1.02); }
+.dir-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 700;
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+.dir-desc { font-size: 12px; color: #606266; margin-bottom: 6px; line-height: 1.5; }
+.dir-market { font-size: 11px; color: #909399; background: #f5f7fa; padding: 3px 8px; border-radius: 4px; margin-bottom: 8px; display: inline-block; }
+.dir-companies { display: flex; flex-wrap: wrap; gap: 4px; }
+.chain-company {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: #f0f5ff;
+    border-radius: 4px;
+    font-size: 12px;
+}
+.chain-company.is-key { background: #ecf5ff; border: 1px solid #b3d8ff; font-weight: 600; }
+.comp-name { color: #303133; }
+.comp-code { color: #409eff; font-family: monospace; font-size: 11px; }
+.comp-tag { color: #909399; font-size: 10px; }
+.dir-products { margin-top: 6px; }
+
+/* 时间线 */
+.chain-timeline {
+    background: #fafafa;
+    border: 1px solid #ebeef5;
+    border-radius: 8px;
+    padding: 16px;
+}
+.timeline-title { font-weight: 600; font-size: 14px; margin-bottom: 12px; }
+.timeline-steps { display: flex; gap: 0; position: relative; }
+.timeline-steps::before {
+    content: '';
+    position: absolute;
+    top: 18px;
+    left: 30px;
+    right: 30px;
+    height: 2px;
+    background: #dcdfe6;
+}
+.timeline-step {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    gap: 4px;
+}
+.tl-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #c0c4cc;
+    z-index: 1;
+    border: 2px solid #fff;
+}
+.tl-dot.current { background: #409eff; width: 14px; height: 14px; box-shadow: 0 0 0 3px rgba(64,158,255,0.3); }
+.tl-dot.upcoming { background: #e6a23c; }
+.tl-dot.future { background: #c0c4cc; }
+.tl-date { font-size: 11px; font-weight: 600; color: #606266; }
+.tl-event { font-size: 11px; color: #909399; text-align: center; line-height: 1.4; }
 
 /* 图谱+总结左右布局 */
 .graph-body {

@@ -35,6 +35,55 @@ export function refreshMarketData(dateParam, suffix = '') {
     return api.post('/market/refresh', null, { params, timeout: 300000 })
 }
 
+// ========== 叙事分析 ==========
+export function getMarketNarratives(refresh = false, dateParam = null) {
+    const params = { refresh }
+    if (dateParam) params.date = dateParam
+    return api.get('/market/narratives', { params })
+}
+
+export function getNarrativeDates() {
+    return api.get('/market/narratives/dates')
+}
+
+export function getDeepNarrativeAnalysis(date) {
+    const params = {}
+    if (date) params.date = date
+    return api.post('/market/narratives/deep-analysis', null, { params })
+}
+
+export function getKeyPeople(market = 'all') {
+    return api.get('/market/people', { params: { market } })
+}
+
+export function getPersonStatements(market = 'all', days = 3, limit = 30, person_id = null) {
+    return api.get('/market/people/statements', { params: { market, days, limit, person_id } })
+}
+
+export function addPersonStatement(data) {
+    return api.post('/market/people/statements', null, { params: data })
+}
+
+export function fetchNews() {
+    return api.post('/market/people/fetch-news')
+}
+
+export function checkNetwork() {
+    return api.get('/market/people/check-network')
+}
+
+export function getPersonSummary(market = 'all', days = 7) {
+    return api.get('/market/people/summary', { params: { market, days } })
+}
+
+export function getStatementNarratives(market = 'all', days = 7) {
+    return api.get('/market/people/statement-narratives', { params: { market, days } })
+}
+
+export function dedupStatements() {
+    return api.post('/market/people/dedup')
+}
+
 // ========== 持仓 ==========
 export function getPositions() {
     return api.get('/positions')

@@ -29,6 +29,12 @@
                     <el-menu-item index="/reports">
                         <span>📋 复盘报告</span>
                     </el-menu-item>
+                    <el-menu-item index="/narratives">
+                        <span>🎯 叙事分析</span>
+                    </el-menu-item>
+                    <el-menu-item index="/news-overview">
+                        <span>📰 新闻分析</span>
+                    </el-menu-item>
                 </el-sub-menu>
                 <el-menu-item index="/watchlist">
                     <el-icon><View /></el-icon>

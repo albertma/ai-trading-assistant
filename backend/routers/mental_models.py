@@ -1755,3 +1755,47 @@ def get_stock_sector(code: str = Query(...), date_str: str = Query(None, alias="
         "sector": sector,
         "theme": theme,
     }
+
+
+@router.post("/sector-compute")
+def compute_sector_analysis_api(
+    date_str: str = Query(None, alias="date"),
+):
+    """手动触发：刷新板块分化数据 + 计算周期相位 + 生成AI摘要（全流程）"""
+    target_date = date_str or date.today().isoformat()
+    results = {"date": target_date, "steps": []}
+
+    # Step 1: Refresh sector dispersion
+    try:
+        refresh_result = refresh_sector_dispersion(date_str=target_date)
+        results["steps"].append({
+            "step": "sector_dispersion",
+            "status": "ok",
+            "sectors": refresh_result.get("sectors", 0),
+        })
+    except Exception as e:
+        results["steps"].append({
+            "step": "sector_dispersion",
+            "status": "failed",
+            "error": str(e),
+        })
+        return {**results, "status": "failed"}
+
+    # Step 2: Compute sector cycles
+    try:
+        cycle_result = compute_sector_cycles(target_date)
+        results["steps"].append({
+            "step": "sector_cycles",
+            "status": "ok",
+            "sectors": cycle_result.get("sectors", 0),
+        })
+    except Exception as e:
+        results["steps"].append({
+            "step": "sector_cycles",
+            "status": "failed",
+            "error": str(e),
+        })
+        return {**results, "status": "partial"}
+
+    results["status"] = "ok"
+    return results

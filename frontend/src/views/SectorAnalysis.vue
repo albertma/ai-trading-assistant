@@ -14,6 +14,10 @@
                             :disabled-date="disabledDate" @change="onDateChange"
                             :clearable="false" />
                         <el-button size="small" @click="refreshData" :loading="loading">🔄 刷新</el-button>
+                        <el-button v-if="selectedDate" size="small" type="warning"
+                            @click="computeSectorAnalysis" :loading="computing" plain>
+                            {{ computing ? '计算中...' : '🧮 手动计算' }}
+                        </el-button>
                     </div>
                 </div>
             </template>
@@ -312,6 +316,7 @@ const sectors = ref([])
 const summary = ref(null)
 const dataDate = ref('')
 const loading = ref(false)
+const computing = ref(false)
 const phaseFilter = ref('')
 const searchQuery = ref('')
 const selectedDate = ref('')
@@ -402,6 +407,28 @@ async function loadData(targetDate) {
 
 async function refreshData() {
     await loadData()
+}
+
+async function computeSectorAnalysis() {
+    const date = selectedDate.value
+    if (!date) {
+        ElMessage.warning('请先选择日期')
+        return
+    }
+    computing.value = true
+    try {
+        const { data } = await axios.post(`${API_BASE}/sector-compute?date=${date}`)
+        if (data.status === 'ok') {
+            ElMessage.success(`✅ 计算完成：分散度${data.steps?.[0]?.sectors || 0}个板块 + 周期${data.steps?.[1]?.sectors || 0}个板块`)
+        } else {
+            ElMessage.warning('部分步骤失败: ' + (data.steps?.map(s => `${s.step}=${s.status}`).join(', ') || '未知'))
+        }
+        await loadData(date)
+    } catch (e) {
+        ElMessage.error('计算失败: ' + (e.response?.data?.detail || e.message))
+    } finally {
+        computing.value = false
+    }
 }
 
 // ── 个股搜索 ──
