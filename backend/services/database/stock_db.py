@@ -756,8 +756,27 @@ def fetch_and_save_kline(code: str, days: int = 400) -> tuple[bool, int]:
     except Exception:
         pass
 
-    # 美股 → ak.stock_us_daily
-    if _market in ("us_stock", "hk_stock", "crypto"):
+    # 港股 → ak.stock_hk_daily
+    if _market == "hk_stock":
+        try:
+            import akshare as ak
+            df = ak.stock_hk_daily(symbol=code)
+            records = []
+            for _, r in df.iterrows():
+                records.append({
+                    "date": str(r["date"]).split("T")[0].split(" ")[0],
+                    "open": float(r["open"]), "close": float(r["close"]),
+                    "high": float(r["high"]), "low": float(r["low"]),
+                    "volume": float(r["volume"]),
+                })
+            saved = save_kline_records(code, records)
+            pruned = prune_kline(code)
+            return True, saved
+        except Exception:
+            return False, 0
+
+    # 美股/加密 → ak.stock_us_daily
+    if _market in ("us_stock", "crypto"):
         try:
             import akshare as ak
             df = ak.stock_us_daily(symbol=code, adjust="")
