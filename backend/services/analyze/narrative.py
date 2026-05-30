@@ -406,7 +406,7 @@ def _fallback_narratives(market_snapshot: dict | None = None) -> list[dict]:
     if not market_snapshot:
         return []
 
-    sectors = market_snapshot.get("top_sectors", [])[:5]
+    sectors = market_snapshot.get("top_sectors", [])[:8]
     narrative_map = {
         "人工智能": {"cat": "科技", "trigger": "AI概念活跃"},
         "半导体": {"cat": "科技", "trigger": "国产芯片替代"},
@@ -419,39 +419,59 @@ def _fallback_narratives(market_snapshot: dict | None = None) -> list[dict]:
     }
 
     narratives = []
+    seen_cats = set()
     for s in sectors:
         name = s["name"]
+        avg = s.get("avg_change", 0) or 0
+        # 先匹配关键词
         matched = None
         for keyword, info in narrative_map.items():
             if keyword in name or name in keyword:
                 matched = keyword
                 break
         if matched:
-            avg = s["avg_change"]
             stage = "发酵" if avg > 2 else ("萌芽" if avg > 0 else "退潮")
-            score = 40 if avg > 2 else (20 if avg > 0 else 80)
-            narratives.append({
-                "name": matched,
-                "description": f"{name}板块今日表现{'强势' if avg > 0 else '弱势'}，平均涨幅{avg:+.1f}%",
-                "category": narrative_map[matched]["cat"],
-                "lifecycle_stage": stage,
-                "lifecycle_score": score,
-                "trigger_event": narrative_map[matched]["trigger"],
-                "evidence_supporting": [f"{name}板块今日涨幅{avg:+.1f}%"],
-                "evidence_contradicting": [],
-                "confirmation_score": 50 if avg > 0 else 30,
-                "confirmation_trend": "confirming" if avg > 0 else "disproving",
-                "related_sectors": [name],
-                "related_stocks": [s.get("top_stock", "")] if s.get("top_stock") else [],
-                "biases": ["recency", "herding"],
-                "biases_detail": [
-                    {"name": "recency", "desc": BIAS_MAP.get("recency", "")},
-                    {"name": "herding", "desc": BIAS_MAP.get("herding", "")},
-                ],
-                "date": market_snapshot.get("date", date.today().isoformat()),
-            })
+            score = min(int(40 + abs(avg) * 5), 100)
+            cat = narrative_map[matched]["cat"]
+            if cat in seen_cats:
+                continue
+            seen_cats.add(cat)
+            narratives.append(_make_fallback_narrative(name, avg, matched, cat, narrative_map[matched]["trigger"], market_snapshot))
+        else:
+            # 兜底：关键词不匹配也生成（去掉行业后缀）
+            base_name = name.replace("Ⅱ", "").replace("I", "").replace(" ", "")
+            stage = "发酵" if avg > 2 else ("萌芽" if avg > 0 else "退潮")
+            cat = "其他"
+            trigger = f"{name}板块今日表现突出，平均涨幅{avg:+.1f}%"
+            narratives.append(_make_fallback_narrative(name, avg, base_name, cat, trigger, market_snapshot))
 
-    return narratives
+    return narratives[:6]
+
+
+def _make_fallback_narrative(name, avg, matched_name, cat, trigger, market_snapshot):
+    """构造兜底叙事对象"""
+    stage = "发酵" if avg > 2 else ("萌芽" if avg > 0 else "退潮")
+    score = min(int(40 + abs(avg) * 5), 100)
+    return {
+        "name": matched_name,
+        "description": f"{name}板块今日表现{'强势' if avg > 0 else '弱势'}，平均涨幅{avg:+.1f}%",
+        "category": cat,
+        "lifecycle_stage": stage,
+        "lifecycle_score": score,
+        "trigger_event": trigger,
+        "evidence_supporting": [f"{name}板块今日涨幅{avg:+.1f}%"],
+        "evidence_contradicting": [],
+        "confirmation_score": 50 if avg > 0 else 30,
+        "confirmation_trend": "confirming" if avg > 0 else "disproving",
+        "related_sectors": [name],
+        "related_stocks": [s.get("top_stock", "") for s in (market_snapshot.get("top_sectors") or []) if s.get("name") == name and s.get("top_stock")],
+        "biases": ["recency", "herding"],
+        "biases_detail": [
+            {"name": "recency", "desc": BIAS_MAP.get("recency", "")},
+            {"name": "herding", "desc": BIAS_MAP.get("herding", "")},
+        ],
+        "date": market_snapshot.get("date", date.today().isoformat()),
+    }
 
 
 def get_available_dates() -> list[str]:
