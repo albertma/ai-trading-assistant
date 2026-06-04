@@ -61,6 +61,18 @@ def init_db():
             triggered INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
+        CREATE TABLE IF NOT EXISTS stock_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            event_type TEXT NOT NULL DEFAULT '解禁',
+            event_date TEXT NOT NULL,
+            title TEXT DEFAULT '',
+            detail TEXT DEFAULT '',
+            source TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_se_code ON stock_events(code);
+        CREATE INDEX IF NOT EXISTS idx_se_date ON stock_events(event_date);
         CREATE TABLE IF NOT EXISTS contradiction_ai_cache (
             code TEXT NOT NULL,
             report_period TEXT NOT NULL,
@@ -274,6 +286,7 @@ def init_db():
             price REAL NOT NULL,
             total REAL NOT NULL,
             note TEXT DEFAULT '',
+            rationale TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_tl_code ON trade_logs(code);

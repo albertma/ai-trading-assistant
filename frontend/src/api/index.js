@@ -114,6 +114,28 @@ export function updateTrade(code, tradeId, data) {
 export function deleteTrade(code, tradeId) {
     return api.delete(`/positions/${code}/trades/${tradeId}`)
 }
+// ========== 事件提醒 ==========
+export function getEvents(params = {}) {
+    return api.get('/events', { params })
+}
+
+export function addEvent(data) {
+    return api.post('/events', data)
+}
+
+export function deleteEvent(id) {
+    return api.delete(`/events/${id}`)
+}
+
+// ========== 仓位分析 ==========
+export function getWeightCheck(maxWeight = 20) {
+    return api.get('/positions/weight-check', { params: { max_weight: maxWeight } })
+}
+
+export function getBatchPlan(data) {
+    return api.post('/positions/batch-plan', data)
+}
+
 export function getPositionAnalysis() {
     return api.get('/positions/analysis')
 }

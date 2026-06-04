@@ -41,6 +41,70 @@ def build_position(r: dict) -> dict:
     }
 
 
+# ======== 仓位权重检查 ========
+
+def weight_check(max_weight_pct: float = 20.0) -> dict:
+    """检查每个持仓占组合总市值的权重，返回超限列表和全貌"""
+    rows = read_all()
+    if not rows:
+        return {"overweight": [], "total_value_cny": 0, "positions": []}
+
+    positions = []
+    for r in rows:
+        p = build_position(r)
+        fx = FX_RATES.get(p["market"], 1.0)
+        p["value_cny"] = round(p["market_value"] * fx, 2)
+        positions.append(p)
+
+    total_value_cny = sum(p["value_cny"] for p in positions) or 1  # 避免除0
+
+    rich = []
+    for p in positions:
+        wt = round(p["value_cny"] / total_value_cny * 100, 2)
+        p["weight_pct"] = wt
+        p["weight_status"] = "over" if wt > max_weight_pct else "safe"
+        rich.append(p)
+
+    overweight = [p for p in rich if p["weight_status"] == "over"]
+    return {"overweight": overweight, "total_value_cny": round(total_value_cny, 2), "positions": rich}
+
+
+# ======== 分批建仓/减仓建议 ========
+
+def batch_plan(direction: str, total_qty: float, current_price: float,
+               batches: int = 3, interval: float = 0.05) -> list[dict]:
+    """生成分批建仓/减仓建议
+
+    direction: '买入'/'卖出'
+    total_qty: 总数量
+    current_price: 当前价
+    batches: 分成几批（默认3批）
+    interval: 每批价格间隔比例（默认5%）
+    """
+    if direction == "买入":
+        step = -1  # 越买越低
+    else:
+        step = 1   # 越卖越高
+
+    per_batch = round(total_qty / batches)
+    plan = []
+    for i in range(batches):
+        price = round(current_price * (1 + step * interval * i), 3)
+        plan.append({
+            "batch": i + 1,
+            "quantity": per_batch,
+            "price": price,
+            "total": round(per_batch * price, 2),
+            "note": f"第{i+1}批{'建仓' if direction == '买入' else '减仓'}@{price}",
+        })
+    # 最后一笔补齐余数
+    remainder = total_qty - per_batch * batches
+    if remainder > 0:
+        plan[-1]["quantity"] = round(per_batch + remainder)
+        plan[-1]["total"] = round(plan[-1]["quantity"] * plan[-1]["price"], 2)
+    return plan
+
+
 def _safe_float(val, default=0.0) -> float:
     try:
         return float(val) if val else default

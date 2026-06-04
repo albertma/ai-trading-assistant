@@ -64,7 +64,8 @@ def _detect_market(code: str) -> str:
         return "a_stock"
     if code.startswith(("6", "0", "3", "2", "4", "8")):
         return "a_stock"
-    if code.upper() in ("BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOT", "DOGE", "AVAX"):
+    if code.upper() in ("BTC", "ETH", "SOL", "BNB", "XRP", "ADA", 
+                        "DOT", "DOGE", "AVAX", "HYPE"):
         return "crypto"
     return "unknown"
 

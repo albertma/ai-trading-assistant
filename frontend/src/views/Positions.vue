@@ -178,6 +178,7 @@
                     <el-input-number v-model="tradeForm.quantity" :min="1" style="width:130px;" size="small" placeholder="数量" />
                     <el-input-number v-model="tradeForm.price" :min="0.01" :step="0.01" :precision="2" style="width:140px;" size="small" placeholder="价格" />
                     <el-input v-model="tradeForm.note" placeholder="备注" size="small" style="width:150px;" />
+                    <el-input v-model="tradeForm.rationale" placeholder="交易理由" size="small" style="width:200px;" />
                     <el-button size="small" type="primary" @click="handleSaveTrade" :loading="tradeSaving">确认</el-button>
                 </div>
 
@@ -201,6 +202,9 @@
                     </el-table-column>
                     <el-table-column label="备注" min-width="130">
                         <template #default="{ row }">{{ row.note || '--' }}</template>
+                    </el-table-column>
+                    <el-table-column label="理由" min-width="150">
+                        <template #default="{ row }">{{ row.rationale || '--' }}</template>
                     </el-table-column>
                     <el-table-column label="操作" width="80">
                         <template #default="{ row }">
@@ -239,6 +243,71 @@
             </template>
         </el-dialog>
     </div>
+
+    <!-- ==================== 事件提醒 & 仓位集中度 ==================== -->
+    <div style="display:flex;gap:12px;margin-top:16px;" v-if="positions.length">
+        <!-- 事件提醒 -->
+        <el-card shadow="hover" style="flex:1;border-left:4px solid #e6a23c;">
+            <template #header>
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <b>📅 限售解禁 / 事件提醒 ({{ upcomingEvents.length }})</b>
+                    <el-button size="small" type="warning" plain @click="showAddEvent = true">+ 新增</el-button>
+                </div>
+            </template>
+            <div v-if="upcomingEvents.length" style="max-height:200px;overflow-y:auto;">
+                <div v-for="ev in upcomingEvents" :key="ev.id" style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;border-bottom:1px solid #f0f0f0;">
+                    <el-tag size="mini" :type="ev.event_type==='解禁'?'danger':'warning'" effect="dark">{{ ev.event_type }}</el-tag>
+                    <span style="color:#909399;">{{ ev.event_date }}</span>
+                    <b>{{ ev.title || ev.code }}</b>
+                    <span style="color:#909399;flex:1;font-size:11px;">{{ ev.detail }}</span>
+                    <el-button size="mini" type="danger" link @click="removeEvent(ev.id)">×</el-button>
+                </div>
+            </div>
+            <div v-else style="color:#909399;font-size:13px;padding:8px 0;">暂无近期待办事件</div>
+        </el-card>
+
+        <!-- 仓位集中度 -->
+        <el-card shadow="hover" style="flex:1;border-left:4px solid #409eff;">
+            <template #header>
+                <b>📊 仓位集中度 (总值 ¥{{ fmt(totalValueCny) }})</b>
+            </template>
+            <div v-if="weightData.length" style="max-height:200px;overflow-y:auto;">
+                <div v-for="p in weightData" :key="p.code" style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:13px;">
+                    <span style="width:70px;overflow:hidden;text-overflow:ellipsis;">{{ p.name }}</span>
+                    <el-progress :percentage="p.weight_pct" :stroke-width="12"
+                        :status="p.weight_status === 'over' ? 'exception' : 'success'"
+                        style="flex:1;" />
+                    <span :style="{color:p.weight_status==='over'?'#f56c6c':'#67c23a',fontWeight:'bold',fontSize:'12px'}">
+                        {{ p.weight_pct }}%
+                    </span>
+                </div>
+            </div>
+            <div v-else style="color:#909399;font-size:13px;padding:8px 0;">暂无持仓</div>
+        </el-card>
+    </div>
+
+    <!-- ==================== 新增事件对话框 ==================== -->
+    <el-dialog v-model="showAddEvent" title="📅 新增事件" width="400px">
+        <el-form label-width="70px">
+            <el-form-item label="股票代码"><el-input v-model="eventForm.code" placeholder="如 002230" /></el-form-item>
+            <el-form-item label="事件类型">
+                <el-select v-model="eventForm.event_type" style="width:100%">
+                    <el-option label="🔒 限售解禁" value="解禁" />
+                    <el-option label="📈 定增/配股" value="定增" />
+                    <el-option label="📊 财报披露" value="财报" />
+                    <el-option label="🏛️ 股东大会" value="股东大会" />
+                    <el-option label="其他" value="其他" />
+                </el-select>
+            </el-form-item>
+            <el-form-item label="日期"><el-input v-model="eventForm.event_date" placeholder="YYYY-MM-DD" /></el-form-item>
+            <el-form-item label="标题"><el-input v-model="eventForm.title" placeholder="事件标题" /></el-form-item>
+            <el-form-item label="详情"><el-input v-model="eventForm.detail" placeholder="补充说明" /></el-form-item>
+        </el-form>
+        <template #footer>
+            <el-button @click="showAddEvent = false">取消</el-button>
+            <el-button type="primary" @click="handleAddEvent">添加</el-button>
+        </template>
+    </el-dialog>
 </template>
 
 <script setup>
@@ -260,7 +329,7 @@ const manageCode = ref('')
 const searchQ = ref('')
 const managePosition = computed(() => positions.value.find(p => p.code === manageCode.value))
 const manageTrades = ref([])
-const tradeForm = ref({ direction: '买入', trade_date: '', quantity: 100, price: 0, note: '' })
+const tradeForm = ref({ direction: '买入', trade_date: '', quantity: 100, price: 0, note: '', rationale: '' })
 const tradeSaving = ref(false)
 
 // 编辑（列表行内快速调整）
@@ -285,8 +354,6 @@ function fmt(v) {
     if (v == null) return '0'
     return Math.abs(v).toLocaleString('zh-CN', { minimumFractionDigits:0, maximumFractionDigits:0 })
 }
-
-onMounted(async () => { await loadData() })
 
 async function loadData() {
     loading.value = true
@@ -368,7 +435,7 @@ function selectStock(item) {
 }
 function openManageDialog() {
     const today = new Date().toISOString().slice(0, 10)
-    tradeForm.value = { direction: '买入', trade_date: today, quantity: 100, price: 0, note: '' }
+    tradeForm.value = { direction: '买入', trade_date: today, quantity: 100, price: 0, note: '', rationale: '' }
     manageCode.value = ''
     searchQ.value = ''
     manageTrades.value = []
@@ -414,7 +481,7 @@ async function handleSaveTrade() {
         await loadData()
         // 重置表单（日期保留今天）
         const today = new Date().toISOString().slice(0, 10)
-        tradeForm.value = { direction: '买入', trade_date: today, quantity: 100, price: 0, note: '' }
+        tradeForm.value = { direction: '买入', trade_date: today, quantity: 100, price: 0, note: '', rationale: '' }
     } catch (e) { ElMessage.error(e.response?.data?.detail || '保存失败')
     } finally { tradeSaving.value = false }
 }
@@ -430,7 +497,60 @@ async function removeManageTrade(row) {
 }
 
 function goAnalysis(code) { router.push({ path: '/analysis', query: { code } }) }
-</script>
+
+// ===== 事件提醒 =====
+const showAddEvent = ref(false)
+const upcomingEvents = ref([])
+const eventForm = ref({ code: '', event_type: '解禁', event_date: '', title: '', detail: '' })
+
+async function loadEvents() {
+    try {
+        const res = await fetch('/api/v1/events?days=90')
+        const data = await res.json()
+        upcomingEvents.value = data.events || []
+    } catch { upcomingEvents.value = [] }
+}
+async function handleAddEvent() {
+    const f = eventForm.value
+    if (!f.code || !f.event_date) { ElMessage.warning('请输入股票代码和日期'); return }
+    try {
+        await (await fetch('/api/v1/events', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(f),
+        })).json()
+        ElMessage.success('事件已添加')
+        showAddEvent.value = false
+        eventForm.value = { code: '', event_type: '解禁', event_date: '', title: '', detail: '' }
+        await loadEvents()
+    } catch { ElMessage.error('添加失败') }
+}
+async function removeEvent(id) {
+    try {
+        await (await fetch(`/api/v1/events/${id}`, { method: 'DELETE' })).json()
+        await loadEvents()
+    } catch { ElMessage.error('删除失败') }
+}
+
+// ===== 仓位集中度 =====
+const weightData = ref([])
+const totalValueCny = ref(0)
+
+async function loadWeights() {
+    try {
+        const res = await fetch('/api/v1/positions/weight-check?max_weight=20')
+        const data = await res.json()
+        weightData.value = (data.positions || []).sort((a, b) => b.weight_pct - a.weight_pct)
+        totalValueCny.value = data.total_value_cny || 0
+    } catch { weightData.value = []; totalValueCny.value = 0 }
+}
+
+// 在 loadData 后同时加载事件和权重
+async function loadAllData() {
+    await loadData()
+    await Promise.all([loadEvents(), loadWeights()])
+}
+
+onMounted(async () => { await loadAllData() })</script>
 
 <style scoped>
 .positions-page { max-width: 1400px; margin: 0 auto; }

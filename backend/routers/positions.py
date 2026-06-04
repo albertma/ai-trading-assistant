@@ -1,6 +1,7 @@
 """持仓管理 API — 纯路由层（业务逻辑在 services/tradingmgt/）"""
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from backend.services.tradingmgt import (
     position_service,
@@ -62,7 +63,7 @@ def add_trade(code: str, trade: TradeLogIn):
     """新增一笔交易 → 自动更新持仓"""
     return trade_service.add_trade(
         code, trade.direction, trade.trade_date,
-        trade.quantity, trade.price, trade.note,
+        trade.quantity, trade.price, trade.note, trade.rationale,
     )
 
 
@@ -72,7 +73,7 @@ def update_trade(code: str, trade_id: int, trade: TradeLogIn):
     try:
         return trade_service.update_trade(
             code, trade_id, trade.direction, trade.trade_date,
-            trade.quantity, trade.price, trade.note,
+            trade.quantity, trade.price, trade.note, trade.rationale,
         )
     except ValueError as e:
         raise HTTPException(404, str(e))
@@ -93,3 +94,30 @@ def delete_trade(code: str, trade_id: int):
 def position_analysis():
     """持仓多维度分析"""
     return position_service.analyze_positions()
+
+
+# ========== 仓位权重检查 ==========
+
+@router.get("/weight-check")
+def check_weights(max_weight: float = 20.0):
+    """检查每个持仓占组合总市值权重，超限返回警告"""
+    return position_service.weight_check(max_weight_pct=max_weight)
+
+
+# ========== 分批建仓/减仓建议 ==========
+
+class BatchPlanBody(BaseModel):
+    direction: str = "买入"
+    total_qty: float = 1000
+    current_price: float = 10.0
+    batches: int = 3
+    interval: float = 0.05
+
+
+@router.post("/batch-plan")
+def plan_batches(body: BatchPlanBody):
+    """生成分批建仓/减仓建议"""
+    return {"plan": position_service.batch_plan(
+        body.direction, body.total_qty, body.current_price,
+        body.batches, body.interval,
+    )}

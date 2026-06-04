@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 import urllib.request, urllib.parse
 import xml.etree.ElementTree as ET
 import re, json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 router = APIRouter(tags=["新闻聚合"])
 
@@ -53,7 +53,7 @@ NEWS_SOURCES = {
 
 
 def _fetch_google_news(query: str, max_results: int = 8) -> list[dict]:
-    """从 Google News RSS 抓取新闻（5s超时）"""
+    """从 Google News RSS 抓取新闻（5s超时），仅返回30天内的新闻"""
     try:
         url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=zh-CN&gl=CN"
         req = urllib.request.Request(url, headers={
@@ -61,6 +61,8 @@ def _fetch_google_news(query: str, max_results: int = 8) -> list[dict]:
         })
         resp = urllib.request.urlopen(req, timeout=5)
         html = resp.read().decode("utf-8", errors="replace")
+
+        cutoff_date = datetime.now() - timedelta(days=30)
 
         # 解析 RSS XML
         items = []
@@ -78,6 +80,17 @@ def _fetch_google_news(query: str, max_results: int = 8) -> list[dict]:
             title = title.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'")
             if not title or title == "Google 新闻":
                 continue
+
+            # 日期过滤：解析 pubDate，超过30天的跳过
+            if date_m:
+                try:
+                    pub_dt = datetime.strptime(
+                        date_m.group(1)[:25], "%a, %d %b %Y %H:%M:%S"
+                    )
+                    if pub_dt < cutoff_date:
+                        continue
+                except ValueError:
+                    pass  # 日期解析失败，保留（宁可保留不丢）
 
             link = link_m.group(1) if link_m else ""
             pub_date = date_m.group(1) if date_m else ""

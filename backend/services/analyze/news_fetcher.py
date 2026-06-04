@@ -120,10 +120,15 @@ def fetch_person_news(person_name: str, max_articles: int = 5) -> list[dict]:
     """用 Google News RSS 搜索某个人的最新新闻
     
     返回格式: [{"title": ..., "url": ..., "date": ...}, ...]
+    仅返回30天内的新闻
     """
+    from datetime import timedelta
+    
     queries = PERSON_QUERIES.get(person_name, [person_name])
     seen_urls: set[str] = set()
     articles: list[dict] = []
+    max_days_old = 30
+    cutoff_date = date.today() - timedelta(days=max_days_old)
 
     for query in queries:
         if len(articles) >= max_articles:
@@ -132,6 +137,15 @@ def fetch_person_news(person_name: str, max_articles: int = 5) -> list[dict]:
             results = _search_google_news(query)
             for art in results:
                 url = art.get("url", "")
+                art_date_str = art.get("date", "")
+                # 日期过滤：跳过超过30天的新闻
+                if art_date_str:
+                    try:
+                        art_date = datetime.strptime(art_date_str, "%Y-%m-%d").date()
+                        if art_date < cutoff_date:
+                            continue
+                    except ValueError:
+                        pass  # 日期解析失败，保留（宁可保留也不要漏）
                 if url and url not in seen_urls:
                     seen_urls.add(url)
                     articles.append(art)
@@ -329,6 +343,12 @@ def fetch_all_news(max_articles_per_person: int = 3) -> dict:
         "errors": [],
     }
 
+    db_conn = None
+    try:
+        db_conn = _get_db()
+    except Exception:
+        pass
+
     for p in people:
         name = p["name"]
         articles = fetch_person_news(name, max_articles_per_person)
@@ -341,6 +361,21 @@ def fetch_all_news(max_articles_per_person: int = 3) -> dict:
 
         for art in articles:
             try:
+                # 去重：检查30天内是否已存在相同标题
+                is_dup = False
+                if db_conn:
+                    try:
+                        dup_check = db_conn.execute(
+                            "SELECT id FROM person_statements WHERE statement = ? AND statement_date >= ? LIMIT 1",
+                            (art["title"], (date.today() - timedelta(days=30)).isoformat())
+                        ).fetchone()
+                        if dup_check:
+                            is_dup = True
+                    except Exception:
+                        pass
+                if is_dup:
+                    continue
+
                 # 用 AI/关键词分析
                 analysis = _classify_by_keywords(art["title"], name)
 
@@ -386,7 +421,26 @@ def run_once() -> dict:
         return {"status": "error", "message": "网络不可达（Google News）"}
     result = fetch_all_news(max_articles_per_person=3)
     result["status"] = "ok"
+    # 自动清理30天前的旧数据
+    cleaned = cleanup_old_statements(30)
+    print(f"[news_fetcher] 自动清理 {cleaned} 条旧数据", flush=True)
+    result["cleaned_old"] = cleaned
     return result
+
+
+def cleanup_old_statements(max_days: int = 30) -> int:
+    """删除超过 max_days 天的旧言论记录"""
+    try:
+        conn = _get_db()
+        cutoff = (date.today() - timedelta(days=max_days)).isoformat()
+        deleted = conn.execute(
+            "DELETE FROM person_statements WHERE statement_date < ?", (cutoff,)
+        ).rowcount
+        conn.commit()
+        conn.close()
+        return deleted
+    except Exception:
+        return 0
 
 
 # ═══════════════════════════════════════════════════

@@ -5,6 +5,8 @@ from fastapi import APIRouter, HTTPException, Query
 from datetime import date, timedelta
 import json
 import sqlite3
+import os
+import re
 import numpy as np
 import pandas as pd
 
@@ -1479,6 +1481,31 @@ def _summarize_cycles(sectors: list) -> dict:
     for theme in themes:
         theme.pop("_matched", None)
 
+    # ── 7. 追踪主题（从知识库kg_tracked_topics读取） ──
+    custom_themes = []
+    try:
+        DB_PATH = os.path.expanduser("~/Jarvis/ai_trading/stock_archive.db")
+        kconn = sqlite3.connect(DB_PATH)
+        kc = kconn.cursor()
+        kc.execute(
+            "SELECT topic_name, keywords, description, priority FROM kg_tracked_topics WHERE enabled=1 ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, topic_name"
+        )
+        for row in kc.fetchall():
+            tname, keywords, desc, pri = row
+            # 从keywords中提取6位数字股票代码
+            codes = re.findall(r'\b(6\d{5}|0\d{5}|3\d{5})\b', keywords)
+            custom_themes.append({
+                "name": tname,
+                "keywords": keywords,
+                "description": desc or "",
+                "priority": pri,
+                "stock_count": len(codes),
+                "stock_codes": codes,
+            })
+        kconn.close()
+    except Exception:
+        pass
+
     return {
         "phase_distribution": phases,
         "summary": summary,
@@ -1490,6 +1517,7 @@ def _summarize_cycles(sectors: list) -> dict:
         "focus_sectors": focus_sectors,
         "warnings": warnings,
         "themes": themes,
+        "custom_themes": custom_themes,
     }
 
 

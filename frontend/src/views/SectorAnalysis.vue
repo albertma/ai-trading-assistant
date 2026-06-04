@@ -96,6 +96,32 @@
                 </div>
             </div>
 
+            <!-- ⑤b 追踪主题（自定义） -->
+            <div class="themes-section" v-if="summary.custom_themes && summary.custom_themes.length">
+                <div class="section-title">📌 追踪主题</div>
+                <div class="themes-grid">
+                    <div v-for="ct in summary.custom_themes" :key="ct.name" class="theme-card custom-theme">
+                        <div class="theme-name">
+                            {{ ct.name }}
+                            <el-tag size="small" :type="ct.priority === 'high' ? 'danger' : 'warning'"
+                                style="margin-left:6px;vertical-align:middle;">
+                                {{ ct.priority === 'high' ? '高优先' : '中优先' }}
+                            </el-tag>
+                        </div>
+                        <div class="theme-sectors">
+                            <el-tag v-if="ct.stock_count > 0" size="small" type="info" effect="plain" style="margin:2px;">
+                                {{ ct.stock_count }}只关联标的
+                            </el-tag>
+                            <el-tag v-for="c in ct.stock_codes" :key="c"
+                                size="small" effect="plain" style="margin:2px;" type="primary">
+                                {{ c }}
+                            </el-tag>
+                        </div>
+                        <div class="theme-summary" v-if="ct.description">{{ ct.description }}</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- ⑥ 风险提示 -->
             <div class="warnings-section" v-if="summary.warnings && summary.warnings.length">
                 <div class="section-title">⚠️ 风险提示</div>
@@ -764,6 +790,12 @@ watch(indexChartRef, () => {
 .theme-name { font-size: 14px; font-weight: 600; color: #303133; margin-bottom: 2px; }
 .theme-sectors { font-size: 11px; color: #409eff; margin-bottom: 4px; display: flex; flex-wrap: wrap; gap: 2px; }
 .theme-summary { font-size: 12px; color: #606266; line-height: 1.5; }
+
+/* ⑤b 追踪主题自定义卡片 */
+.custom-theme {
+    background: linear-gradient(135deg, #fff7e6, #fff0f0);
+    border: 1px solid #f0d8c0;
+}
 
 /* ⑥ 风险提示 */
 .warnings-section { margin-top: 4px; }

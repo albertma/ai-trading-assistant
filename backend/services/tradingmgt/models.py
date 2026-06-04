@@ -43,3 +43,4 @@ class TradeLogIn(BaseModel):
     quantity: float = Field(gt=0)
     price: float = Field(gt=0)
     note: str = ""
+    rationale: str = ""

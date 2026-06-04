@@ -398,7 +398,7 @@
         </el-row>
 
         <!-- ==================== 买入对话框 ==================== -->
-        <el-dialog v-model="showBuyDialog" title="💰 买入" width="360px" @close="onBuyDialogClose">
+        <el-dialog v-model="showBuyDialog" title="💰 买入" width="420px" @close="onBuyDialogClose">
             <el-form label-width="70px">
                 <el-form-item label="股票">
                     <span style="font-weight:bold;">{{ selected?.name }} ({{ selected?.code }})</span>
@@ -412,7 +412,18 @@
                 <el-form-item label="合计">
                     <span style="font-weight:bold;font-size:16px;">¥ {{ (buyQty * buyCost).toFixed(2) }}</span>
                 </el-form-item>
+                <el-form-item label="理由">
+                    <el-input v-model="buyRationale" placeholder="这笔买入的判断依据..." size="small" />
+                </el-form-item>
             </el-form>
+            <!-- 分批建议 -->
+            <div v-if="batchPlan.length" style="margin:0 0 12px 10px;padding:10px;background:#f5f7fa;border-radius:6px;font-size:12px;">
+                <div style="font-weight:600;margin-bottom:6px;">📊 分批建议</div>
+                <div v-for="b in batchPlan" :key="b.batch" style="display:flex;gap:6px;margin-bottom:3px;">
+                    <el-tag size="mini" type="info">第{{ b.batch }}批</el-tag>
+                    <span>{{ b.quantity }}股 @ ¥{{ b.price }} = ¥{{ b.total.toFixed(0) }}</span>
+                </div>
+            </div>
             <template #footer>
                 <el-button @click="showBuyDialog = false">取消</el-button>
                 <el-button type="primary" @click="handleBuy" :loading="adding">确认买入</el-button>
@@ -550,6 +561,27 @@ const positionsList = ref([])
 const showBuyDialog = ref(false)
 const buyQty = ref(100)
 const buyCost = ref(0)
+const buyRationale = ref('')
+const batchPlan = ref([])
+
+async function loadBatchPlan() {
+    if (!selected.value || !buyQty.value || !buyCost.value) { batchPlan.value = []; return }
+    try {
+        const resp = await fetch('/api/v1/positions/batch-plan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                direction: '买入',
+                total_qty: buyQty.value,
+                current_price: buyCost.value,
+                batches: 3,
+                interval: 0.05,
+            }),
+        })
+        const data = await resp.json()
+        batchPlan.value = data.plan || []
+    } catch { batchPlan.value = [] }
+}
 const isInPositions = computed(() => {
     if (!selected.value?.code) return false
     return positionsList.value.some(p => p.code === selected.value.code)
@@ -566,27 +598,35 @@ async function loadPositions() {
         positionsList.value = data.positions || []
     } catch { positionsList.value = [] }
 }
-
 function openBuyDialog() {
     buyCost.value = profileData.value?.price || selected.value?.last_price || 0
     buyQty.value = 100
+    buyRationale.value = ''
+    batchPlan.value = []
     showBuyDialog.value = true
+    // 加载分批建议
+    setTimeout(loadBatchPlan, 200)
 }
 
 async function handleBuy() {
     if (!selected.value || !buyQty.value || !buyCost.value) return
+    adding.value = true
     try {
         await addPosition({
             code: selected.value.code,
             name: selected.value.name,
             quantity: buyQty.value,
             cost_price: buyCost.value,
+            note: buyRationale.value ? `理由: ${buyRationale.value}` : '',
         })
         ElMessage.success(`已买入 ${selected.value.name} ${buyQty.value}股 @ ¥${buyCost.value}`)
         showBuyDialog.value = false
         await loadPositions()
+        await refreshProfile()
     } catch (e) {
         ElMessage.error(e.response?.data?.detail || '买入失败')
+    } finally {
+        adding.value = false
     }
 }
 
@@ -716,6 +756,11 @@ watch(showAddDialog, (v) => {
         form.value = { code: '', name: '', priority: 'medium', reason: '' }
         searchText.value = ''
     }
+})
+
+// 数量/价格变化时更新分批建议
+watch([buyQty, buyCost], () => {
+    if (showBuyDialog.value) loadBatchPlan()
 })
 
 // ===== 观察池 =====

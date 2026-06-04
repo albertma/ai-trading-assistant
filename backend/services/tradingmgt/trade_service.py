@@ -135,14 +135,14 @@ def list_trades(code: str) -> list[dict]:
 
 
 def add_trade(code: str, direction: str, trade_date: str,
-              quantity: float, price: float, note: str) -> dict:
+              quantity: float, price: float, note: str, rationale: str = "") -> dict:
     """新增一笔交易 → 自动更新持仓"""
     total = round(quantity * price, 2)
     conn = _get_db()
     cur = conn.execute(
-        "INSERT INTO trade_logs (code, direction, trade_date, quantity, price, total, note) "
-        "VALUES (?,?,?,?,?,?,?)",
-        (code, direction, trade_date, quantity, price, total, note)
+        "INSERT INTO trade_logs (code, direction, trade_date, quantity, price, total, note, rationale) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (code, direction, trade_date, quantity, price, total, note, rationale)
     )
     conn.commit()
     trade_id = cur.lastrowid
@@ -152,14 +152,14 @@ def add_trade(code: str, direction: str, trade_date: str,
 
 
 def update_trade(code: str, trade_id: int, direction: str, trade_date: str,
-                 quantity: float, price: float, note: str):
+                 quantity: float, price: float, note: str, rationale: str = ""):
     """修改一笔交易记录 → 自动更新持仓"""
     total = round(quantity * price, 2)
     conn = _get_db()
     cur = conn.execute(
-        "UPDATE trade_logs SET direction=?, trade_date=?, quantity=?, price=?, total=?, note=? "
+        "UPDATE trade_logs SET direction=?, trade_date=?, quantity=?, price=?, total=?, note=?, rationale=? "
         "WHERE id=? AND code=?",
-        (direction, trade_date, quantity, price, total, note, trade_id, code)
+        (direction, trade_date, quantity, price, total, note, rationale, trade_id, code)
     )
     conn.commit()
     updated = cur.rowcount

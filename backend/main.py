@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 
 from backend.config import HOST, PORT, DEBUG
-from backend.routers import market, positions, analysis, risk, reports, fundamental, profile, watchlist, chat, stock_info, risk_rules, knowledge_graph, mental_models, predict, cron_history, news_overview
+from backend.routers import market, positions, analysis, risk, reports, fundamental, profile, watchlist, chat, stock_info, risk_rules, knowledge_graph, mental_models, predict, cron_history, news_overview, events
 
 app = FastAPI(
     title="AI投研助手",
@@ -52,6 +52,7 @@ app.include_router(mental_models.router, prefix="/api/v1/mental", tags=["思维�
 app.include_router(predict.router, prefix="/api/v1/predict", tags=["AI预测"])
 app.include_router(cron_history.router, prefix="/api/v1", tags=["Cron历史"])
 app.include_router(news_overview.router, prefix="/api/v1", tags=["新闻聚合"])
+app.include_router(events.router, prefix="/api/v1", tags=["事件提醒"])
 
 @app.get("/health")
 def health():

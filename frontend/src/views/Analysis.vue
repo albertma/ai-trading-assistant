@@ -148,6 +148,24 @@
                 </template>
                 <!-- K线图容器 -->
                 <div ref="klineChartRef" style="width:100%;height:520px;margin-bottom:16px;"></div>
+                <!-- 量价分析卡片 -->
+                <el-card v-if="volumeAnalysis" shadow="hover" style="margin-bottom:12px;border:1px solid #334;">
+                    <template #header><b>📊 量价分析</b></template>
+                    <el-row :gutter="12">
+                        <el-col :span="6" v-for="(item, vi) in volumeAnalysis" :key="vi" style="margin-bottom:4px;">
+                            <div style="text-align:center;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;">
+                                <div style="font-size:12px;color:#909399;">{{ item.label }}</div>
+                                <div :style="{ fontSize:'18px', fontWeight:'bold', color: item.color || '#e0e0e0' }">{{ item.value }}</div>
+                                <div style="font-size:11px;color:#909399;">{{ item.sub }}</div>
+                            </div>
+                        </el-col>
+                    </el-row>
+                    <el-divider style="margin:8px 0;" />
+                    <div v-for="(line, li) in volumeSummary" :key="li" style="font-size:12px;color:#ccc;margin-bottom:3px;">
+                        <span v-if="line.icon" style="margin-right:4px;">{{ line.icon }}</span>
+                        <span :style="{ color: line.color || '#ccc' }">{{ line.text }}</span>
+                    </div>
+                </el-card>
                 <div v-if="klineLoading" style="text-align:center;padding:30px;color:#909399;">
                     <el-icon class="is-loading" :size="24"><Loading /></el-icon>
                     <p style="margin-top:8px;">加载K线数据...</p>
@@ -1782,6 +1800,64 @@ const klineChartRef = ref(null)
 let klineChartInstance = null
 const klineLoading = ref(false)
 
+// ===== 量价分析 =====
+const volumeAnalysis = ref(null)
+const volumeSummary = ref([])
+
+function calcVolumeAnalysis(recs) {
+    if (!recs || recs.length < 10) { volumeAnalysis.value = null; volumeSummary.value = []; return }
+    const last = recs[recs.length - 1]
+    const vols = recs.map(r => r.volume)
+    const volMA5 = vols.slice(-5).reduce((a, b) => a + b, 0) / 5
+    const volMA10 = vols.slice(-10).reduce((a, b) => a + b, 0) / 10
+    const volMA20 = vols.slice(-20).reduce((a, b) => a + b, 0) / 20
+    const todayVol = vols[vols.length - 1]
+    const volRatio = volMA10 > 0 ? (todayVol / volMA10) : 1
+    const todayClose = last.close
+    const yesterdayClose = recs[recs.length - 2]?.close || todayClose
+    const priceChange = ((todayClose - yesterdayClose) / yesterdayClose) * 100
+    // 量价背离检测
+    const recent5 = recs.slice(-6)
+    let volumeUp = 0, priceUp = 0
+    for (let i = 0; i < 5 && i < recent5.length - 1; i++) {
+        if (recent5[i + 1].close > recent5[i].close) priceUp++
+        if (recent5[i + 1].volume > recent5[i].volume) volumeUp++
+    }
+    const divergence = (priceUp >= 3 && volumeUp <= 1) ? 'warning' : (priceUp <= 1 && volumeUp >= 3) ? 'danger' : 'normal'
+    // 量价配合
+    let vpStatus, vpColor
+    if (priceChange > 2 && volRatio > 1.2) { vpStatus = '📈 放量上涨'; vpColor = '#f56c6c' }
+    else if (priceChange > 2 && volRatio < 0.8) { vpStatus = '📈 缩量上涨'; vpColor = '#e6a23c' }
+    else if (priceChange < -2 && volRatio > 1.2) { vpStatus = '📉 放量下跌'; vpColor = '#67c23a' }
+    else if (priceChange < -2 && volRatio < 0.8) { vpStatus = '📉 缩量下跌'; vpColor = '#909399' }
+    else { vpStatus = '➡️ 量平价稳'; vpColor = '#909399' }
+    const vol5v20 = volMA5 / volMA20
+    let volTrend, volTrendColor
+    if (vol5v20 > 1.5) { volTrend = '显著放量'; volTrendColor = '#f56c6c' }
+    else if (vol5v20 > 1.2) { volTrend = '温和放量'; volTrendColor = '#e6a23c' }
+    else if (vol5v20 < 0.6) { volTrend = '显著缩量'; volTrendColor = '#67c23a' }
+    else if (vol5v20 < 0.8) { volTrend = '温和缩量'; volTrendColor = '#909399' }
+    else { volTrend = '量能正常'; volTrendColor = '#ccc' }
+    const fv = (v) => v >= 10000 ? (v / 10000).toFixed(1) + '万' : v.toFixed(0)
+    volumeAnalysis.value = [
+        { label: '今日成交', value: fv(todayVol), sub: '日成交量', color: '#409eff' },
+        { label: '5日均量', value: fv(volMA5), sub: 'VOL_MA5', color: '#e6a23c' },
+        { label: '量比', value: volRatio.toFixed(2), sub: '今日/Ma10均量', color: volRatio > 1.2 ? '#f56c6c' : volRatio < 0.8 ? '#67c23a' : '#ccc' },
+        { label: '价量配合', value: vpStatus, sub: `${priceChange > 0 ? '+' : ''}${priceChange.toFixed(2)}%`, color: vpColor },
+    ]
+    volumeSummary.value = [
+        { icon: '📊', text: `成交量趋势：${volTrend}（VOL5均量 = 近20日均量的${(vol5v20 * 100).toFixed(0)}%）`, color: volTrendColor },
+        { icon: '📈', text: `量价关系：${vpStatus}（涨跌幅${priceChange > 0 ? '+' : ''}${priceChange.toFixed(2)}%，量比${volRatio.toFixed(2)}）`, color: vpColor },
+    ]
+    if (divergence === 'warning') {
+        volumeSummary.value.push({ icon: '⚠️', text: '量价背离预警：近5日价格上涨但成交量未同步放大，上涨动力不足', color: '#e6a23c' })
+    } else if (divergence === 'danger') {
+        volumeSummary.value.push({ icon: '⚠️', text: '量价背离预警：近5日价格下跌但成交量持续放大，抛压加重', color: '#f56c6c' })
+    } else {
+        volumeSummary.value.push({ icon: '✅', text: '量价配合正常，无显著背离', color: '#67c23a' })
+    }
+}
+
 function calcSMA(data, period) {
     const result = []
     for (let i = 0; i < data.length; i++) {
@@ -2120,6 +2196,8 @@ async function loadKlineChart() {
             },
         }
         klineChartInstance.setOption(option)
+        // 量价分析
+        calcVolumeAnalysis(recs)
     } catch (e) {
         console.error('K线图加载失败', e)
         console.log('Kline chart error details:', {
