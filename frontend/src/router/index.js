@@ -15,9 +15,13 @@ import SectorAnalysis from '../views/SectorAnalysis.vue'
 import CronHistory from '../views/CronHistory.vue'
 import Narratives from '../views/Narratives.vue'
 import NewsOverview from '../views/NewsOverview.vue'
+import TradingPlans from '../views/TradingPlans.vue'
+import StrategyBacktest from '../views/StrategyBacktest.vue'
+import AIDrivenReport from '../views/AIDrivenReport.vue'
 
 const routes = [
     { path: '/', name: 'Dashboard', component: Dashboard, meta: { title: '市场概览', icon: 'DataAnalysis' } },
+    { path: '/ai-driven', name: 'AIDrivenReport', component: AIDrivenReport, meta: { title: 'AI研报', icon: 'MagicStick' } },
     { path: '/sector-analysis', name: 'SectorAnalysis', component: SectorAnalysis, meta: { title: '板块分析', icon: 'DataBoard' } },
     { path: '/watchlist', name: 'Watchlist', component: Watchlist, meta: { title: '观察池', icon: 'View' } },
     { path: '/positions', name: 'Positions', component: Positions, meta: { title: '持仓看板', icon: 'Wallet' } },
@@ -33,6 +37,8 @@ const routes = [
     { path: '/cron-history', name: 'CronHistory', component: CronHistory, meta: { title: 'Cron任务', icon: 'Timer' } },
     { path: '/narratives', name: 'Narratives', component: Narratives, meta: { title: '叙事分析', icon: 'TrendCharts' } },
     { path: '/news-overview', name: 'NewsOverview', component: NewsOverview, meta: { title: '新闻分析', icon: 'Reading' } },
+    { path: '/trading-plans', name: 'TradingPlans', component: TradingPlans, meta: { title: '交易计划', icon: 'List' } },
+    { path: '/strategy-backtest', name: 'StrategyBacktest', component: StrategyBacktest, meta: { title: '策略回测', icon: 'TrendCharts' } },
 ]
 
 const router = createRouter({

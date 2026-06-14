@@ -114,6 +114,37 @@ def analyze_stock(code: str):
         if cup_handle:
             kline_patterns = cup_handle + kline_patterns
 
+        # ⭐ 精选系统检测（大阳线/三连阳/锤子线 + MACD近3天金叉）
+        elite_signal = None
+        elite_patterns_set = {"大阳线", "三连阳（红三兵）", "锤子线"}
+        current_bullish = [p["pattern"] for p in kline_patterns
+                          if p["direction"] == "bullish" and p["pattern"] in elite_patterns_set]
+        if current_bullish and macd and len(df) >= 30:
+            macd_golden = False
+            macd_vals = (df["close"].ewm(span=12, adjust=False).mean()
+                        - df["close"].ewm(span=26, adjust=False).mean()).values
+            sig_vals = macd_vals.copy() if len(macd_vals) < 9 else (
+                pd.Series(macd_vals).ewm(span=9, adjust=False).mean().values
+            )
+            for j in range(max(1, len(macd_vals) - 3), len(macd_vals)):
+                if (j >= 1 and not np.isnan(macd_vals[j]) and not np.isnan(macd_vals[j-1])
+                    and not np.isnan(sig_vals[j]) and not np.isnan(sig_vals[j-1])
+                    and macd_vals[j-1] <= sig_vals[j-1] and macd_vals[j] > sig_vals[j]):
+                    macd_golden = True
+                    break
+            if current_bullish and macd_golden:
+                sl = round(close * 0.93, 2)
+                min_tp = round(close + (close - sl) * 2, 2)
+                elite_signal = {
+                    "triggered": True,
+                    "patterns": current_bullish,
+                    "macd_golden": True,
+                    "entry_price": round(close, 2),
+                    "stop_loss": sl,
+                    "take_profit": min_tp,
+                    "risk_reward": round((min_tp - close) / max(close - sl, 0.01), 2),
+                }
+
         tech_data = {
             "current_price": close,
             "change_pct": round(pct, 2),
@@ -124,6 +155,7 @@ def analyze_stock(code: str):
             "bullish_alignment": bullish_alignment,
             "trend_status": trend_status,
             "kline_patterns": kline_patterns,
+            "elite_signal": elite_signal,
         }
 
     # --- 2. 基本面分析 ---

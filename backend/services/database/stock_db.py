@@ -73,6 +73,29 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_se_code ON stock_events(code);
         CREATE INDEX IF NOT EXISTS idx_se_date ON stock_events(event_date);
+        CREATE TABLE IF NOT EXISTS trading_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            name TEXT DEFAULT '',
+            direction TEXT NOT NULL DEFAULT 'long' CHECK(direction IN ('long','short')),
+            status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','monitoring','entered','exited','cancelled')),
+            entry_price REAL,
+            stop_loss REAL,
+            take_profit REAL,
+            plan_quantity INTEGER DEFAULT 0,
+            entry_reason TEXT DEFAULT '',
+            exit_reason TEXT DEFAULT '',
+            kline_notes TEXT DEFAULT '',
+            signal_notes TEXT DEFAULT '',
+            actual_entry_price REAL,
+            actual_exit_price REAL,
+            entry_date TEXT,
+            exit_date TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_tp_code ON trading_plans(code);
+        CREATE INDEX IF NOT EXISTS idx_tp_status ON trading_plans(status);
         CREATE TABLE IF NOT EXISTS contradiction_ai_cache (
             code TEXT NOT NULL,
             report_period TEXT NOT NULL,

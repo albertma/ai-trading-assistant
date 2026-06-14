@@ -65,6 +65,7 @@
                         </span>
                         <div style="flex:1"></div>
                         <el-button size="small" @click="goAnalysis">🔍 分析</el-button>
+                        <el-button size="small" type="warning" @click="goTradingPlan">📋 制定计划</el-button>
                         <el-button size="small" type="success" @click="openBuyDialog">💰 买入</el-button>
                         <el-popconfirm v-if="isInPositions" title="确定卖出？" @confirm="handleSell">
                             <template #reference>
@@ -833,8 +834,10 @@ async function handleRemove(code) {
 }
 
 function goAnalysis() {
-    if (!selected.value?.code) return
-    router.push({ path: '/analysis', query: { code: selected.value.code } })
+    if (selected.value?.code) router.push({ path: '/analysis', query: { code: selected.value.code } })
+}
+function goTradingPlan() {
+    if (selected.value?.code) router.push({ path: '/trading-plans', query: { code: selected.value.code, name: selected.value.name || '' } })
 }
 
 function goToHistoryAnalysis(rec) {

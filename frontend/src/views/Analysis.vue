@@ -62,6 +62,9 @@
                         <el-tag v-else size="small" type="success" effect="plain">
                             ✓ 已在观察池
                         </el-tag>
+                        <el-button size="small" type="warning" @click="goTradingPlan">
+                            📋 交易计划
+                        </el-button>
                         <el-button size="small" text type="primary" @click="$router.push('/risk-rules')">
                             规则管理 &raquo;
                         </el-button>
@@ -170,11 +173,57 @@
                     <el-icon class="is-loading" :size="24"><Loading /></el-icon>
                     <p style="margin-top:8px;">加载K线数据...</p>
                 </div>
-                <!-- 形态描述卡片 -->
+                <!-- 形态描述卡片（含精选系统高优先级信号） -->
                 <el-divider content-position="left">📋 K线形态识别</el-divider>
-                <div v-if="result.technical?.kline_patterns?.length">
+                <div v-if="result.technical?.kline_patterns?.length || result.technical?.elite_signal?.triggered">
                     <el-row :gutter="12">
-                        <el-col :span="8" v-for="(p, i) in result.technical.kline_patterns" :key="i" style="margin-bottom:12px;">
+                        <!-- ⭐ 精选系统：最高优先级，全宽展示 -->
+                        <el-col :span="24" v-if="result.technical?.elite_signal?.triggered" style="margin-bottom:16px;">
+                            <el-card shadow="always" style="background:linear-gradient(135deg,#fdf6ec,#fff7e6);border:2px solid #e6a23c;border-radius:10px;">
+                                <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+                                    <div style="display:flex;align-items:center;gap:8px;flex:1;">
+                                        <span style="font-size:28px;">⭐</span>
+                                        <div>
+                                            <div style="display:flex;align-items:center;gap:12px;">
+                                                <b style="font-size:18px;color:#b88230;">精选系统</b>
+                                                <el-tag type="danger" effect="dark" size="small" style="font-size:13px;padding:2px 10px;">📈 买入信号</el-tag>
+                                            </div>
+                                            <div style="font-size:13px;color:#b88230;margin-top:3px;">
+                                                <b>{{ result.technical.elite_signal.patterns.join(' + ') }}</b>
+                                                <span style="margin:0 6px;">+</span>
+                                                <span style="color:#e6a23c;">MACD金叉共振</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <el-tag type="warning" effect="dark" size="small">系统精选</el-tag>
+                                </div>
+                                <div style="display:flex;gap:20px;margin-top:14px;flex-wrap:wrap;">
+                                    <div>
+                                        <span style="font-size:11px;color:#909399;">入场价</span>
+                                        <div style="font-size:18px;font-weight:bold;color:#409eff;">¥{{ result.technical.elite_signal.entry_price }}</div>
+                                    </div>
+                                    <div>
+                                        <span style="font-size:11px;color:#909399;">止损价 (7%)</span>
+                                        <div style="font-size:18px;font-weight:bold;color:#f56c6c;">¥{{ result.technical.elite_signal.stop_loss }}</div>
+                                    </div>
+                                    <div>
+                                        <span style="font-size:11px;color:#909399;">止盈目标</span>
+                                        <div style="font-size:18px;font-weight:bold;color:#67c23a;">¥{{ result.technical.elite_signal.take_profit }}</div>
+                                    </div>
+                                    <div>
+                                        <span style="font-size:11px;color:#909399;">预期盈亏比</span>
+                                        <div style="font-size:18px;font-weight:bold;" :style="{ color: result.technical.elite_signal.risk_reward >= 2 ? '#67c23a' : '#e6a23c' }">
+                                            {{ result.technical.elite_signal.risk_reward }}:1
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="margin-top:10px;font-size:12px;color:#909399;border-top:1px solid #e8d5b0;padding-top:8px;">
+                                    规则：T+1次日开盘买入 | 每笔¥20,000（10%仓位） | MACD死叉退出 | 总资金¥200,000最多持7笔
+                                </div>
+                            </el-card>
+                        </el-col>
+                        <!-- 常规K线形态 -->
+                        <el-col :span="8" v-for="(p, i) in result.technical?.kline_patterns || []" :key="i" style="margin-bottom:12px;">
                             <el-card shadow="hover" :class="'pattern-' + p.direction">
                                 <div class="pattern-header">
                                     <span class="pattern-name">{{ p.pattern }}</span>
@@ -1558,6 +1607,10 @@ const stockTags = ref([])
 const newTagInput = ref('')
 const editingTag = ref(false)
 
+function goTradingPlan() {
+    router.push({ path: '/trading-plans', query: { code: stockCode.value, name: result.value?.name || '' } })
+}
+
 async function loadStockTags() {
     const code = result.value?.code
     if (!code) return
@@ -1881,7 +1934,10 @@ function calcEMA(data, period) {
 }
 
 function calcMACD(close) {
-    const dif = calcEMA(close, 12)
+    const ema12 = calcEMA(close, 12)
+    const ema26 = calcEMA(close, 26)
+    // DIF = EMA12 - EMA26（标准MACD线，围绕0轴波动）
+    const dif = ema12.map((v, i) => +(v - ema26[i]).toFixed(4))
     // DEA = EMA(DIF, 9)
     const dea = []
     let ema_dea = dif[0]
@@ -1950,77 +2006,24 @@ async function insertAnalysisRef(tag) {
 async function captureKlineOffscreen(code) {
     if (!code) return null
     try {
-        const resp = await getLocalKline(code, 200)
+        const resp = await getLocalKline(code, 400)
         const recs = (resp.data?.records || [])
         if (recs.length < 20) return null
 
         const dates = recs.map(r => r.date.slice(5, 10))
-        const opens = recs.map(r => r.open)
         const closes = recs.map(r => r.close)
-        const highs = recs.map(r => r.high)
-        const lows = recs.map(r => r.low)
-        const vols = recs.map(r => r.volume)
-
-        // 计算MA
-        function calcSMA(data, period) {
-            const result = []
-            for (let i = 0; i < data.length; i++) {
-                if (i < period - 1) { result.push(NaN); continue }
-                let sum = 0
-                for (let j = i - period + 1; j <= i; j++) sum += data[j]
-                result.push(+(sum / period).toFixed(2))
-            }
-            return result
-        }
-        function calcEMA(data, period) {
-            const k = 2 / (period + 1); const result = []; let ema = data[0]
-            for (let i = 0; i < data.length; i++) { ema = i === 0 ? data[i] : data[i] * k + ema * (1 - k); result.push(+(ema).toFixed(4)) }
-            return result
-        }
-        function calcMACD(close) {
-            const dif = calcEMA(close, 12); const dea = []; let ema_dea = dif[0]; const k_dea = 2 / 10
-            for (let i = 0; i < dif.length; i++) { ema_dea = i === 0 ? dif[i] : dif[i] * k_dea + ema_dea * (1 - k_dea); dea.push(+(ema_dea).toFixed(4)) }
-            return { dif, dea, macd: dif.map((d, i) => +((d - dea[i]) * 2).toFixed(4)) }
-        }
 
         const ma5 = calcSMA(closes, 5)
         const ma10 = calcSMA(closes, 10)
         const ma20 = calcSMA(closes, 20)
         const ma30 = calcSMA(closes, 30)
         const ma60 = calcSMA(closes, 60)
+        const ma200 = calcSMA(closes, 200)
         const { dif, dea, macd } = calcMACD(closes)
 
-        const candlestickData = recs.map(r => [+r.open, +r.close, +r.low, +r.high])
         const macdBarData = macd.map(v => ({ value: +v.toFixed(4), itemStyle: { color: v >= 0 ? '#f56c6c' : '#67c23a' } }))
 
-        const option = {
-            backgroundColor: '#1a1a2e',
-            animation: false,
-            grid: [
-                { left: '6%', right: '3%', top: '4%', height: '58%' },
-                { left: '6%', right: '3%', top: '72%', height: '18%' },
-            ],
-            xAxis: [
-                { type: 'category', data: dates, gridIndex: 0, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false } },
-                { type: 'category', data: dates, gridIndex: 1, axisLabel: { color: '#888', fontSize: 10 }, axisLine: { lineStyle: { color: '#334' } } },
-            ],
-            yAxis: [
-                { type: 'value', gridIndex: 0, scale: true, splitLine: { lineStyle: { color: '#223', type: 'dashed' } }, axisLabel: { color: '#888', fontSize: 10 } },
-                { type: 'value', gridIndex: 1, scale: true, splitLine: { show: false }, axisLabel: { color: '#888', fontSize: 9 } },
-            ],
-            series: [
-                { name: 'K线', type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0, data: candlestickData, itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' } },
-                { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: recs.map(r => ({ value: r.volume, itemStyle: { color: r.close >= r.open ? '#f56c6c' : '#67c23a' } })) },
-                { name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#e6a23c', data: ma5, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#e6a23c' } },
-                { name: 'MA10', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#409eff', data: ma10, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#409eff' } },
-                { name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#b37feb', data: ma20, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#b37feb' } },
-                { name: 'MA30', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#5cdbd3', data: ma30, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#5cdbd3' } },
-                { name: 'MA60', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#ff85c0', data: ma60, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#ff85c0' } },
-                { name: 'MACD', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: macdBarData },
-                { name: 'DIF', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: dif, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#fff' } },
-                { name: 'DEA', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: dea, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#ffd666' } },
-            ],
-        }
+        const option = buildKlineOption({ recs, dates, ma5, ma10, ma20, ma30, ma60, ma200, dif, dea, macdBarData, compact: true })
 
         // 创建离屏容器 → 初始化echarts → 截图 → 销毁
         const container = document.createElement('div')
@@ -2044,32 +2047,139 @@ async function captureKlineOffscreen(code) {
     }
 }
 
+function buildKlineOption({ recs, dates, ma5, ma10, ma20, ma30, ma60, ma200, dif, dea, macdBarData, compact = false }) {
+    const idx = (v) => ({ xAxisIndex: v, yAxisIndex: v })
+    if (compact) {
+        return {
+            backgroundColor: '#1a1a2e',
+            animation: false,
+            grid: [
+                { left: '6%', right: '3%', top: '4%', height: '58%' },
+                { left: '6%', right: '3%', top: '72%', height: '18%' },
+            ],
+            xAxis: [
+                { type: 'category', data: dates, gridIndex: 0, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false } },
+                { type: 'category', data: dates, gridIndex: 1, axisLabel: { color: '#888', fontSize: 10 }, axisLine: { lineStyle: { color: '#334' } } },
+            ],
+            yAxis: [
+                { type: 'value', gridIndex: 0, scale: true, splitLine: { lineStyle: { color: '#223', type: 'dashed' } }, axisLabel: { color: '#888', fontSize: 10 } },
+                { type: 'value', gridIndex: 1, scale: true, splitLine: { show: false }, axisLabel: { color: '#888', fontSize: 9 } },
+            ],
+            series: [
+                { name: 'K线', type: 'candlestick', ...idx(0), data: recs.map(r => [+r.open, +r.close, +r.low, +r.high]), itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' } },
+                { name: '成交量', type: 'bar', ...idx(1), data: recs.map(r => ({ value: r.volume, itemStyle: { color: r.close >= r.open ? '#f56c6c' : '#67c23a' } })) },
+                { name: 'MA5', type: 'line', ...idx(0), color: '#e6a23c', data: ma5, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#e6a23c' } },
+                { name: 'MA10', type: 'line', ...idx(0), color: '#409eff', data: ma10, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#409eff' } },
+                { name: 'MA20', type: 'line', ...idx(0), color: '#b37feb', data: ma20, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#b37feb' } },
+                { name: 'MA30', type: 'line', ...idx(0), color: '#5cdbd3', data: ma30, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#5cdbd3' } },
+                { name: 'MA60', type: 'line', ...idx(0), color: '#ff85c0', data: ma60, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#ff85c0' } },
+                { name: 'MA200', type: 'line', ...idx(0), color: '#f0f0f0', data: ma200, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#f0f0f0', type: 'dashed' } },
+                { name: 'MACD', type: 'bar', ...idx(1), data: macdBarData },
+                { name: 'DIF', type: 'line', ...idx(1), data: dif, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#fff' } },
+                { name: 'DEA', type: 'line', ...idx(1), data: dea, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#ffd666' } },
+            ],
+        }
+    }
+    return {
+        backgroundColor: '#1a1a2e',
+        animation: false,
+        grid: [
+            { left: '6%', right: '3%', top: '4%', height: '50%' },
+            { left: '6%', right: '3%', top: '62%', height: '13%' },
+            { left: '6%', right: '3%', top: '78%', height: '16%' },
+        ],
+        xAxis: [
+            { type: 'category', data: dates, gridIndex: 0,
+                axisLabel: { color: '#909399', fontSize: 10, interval: 40 },
+                axisLine: { lineStyle: { color: '#334' } },
+                splitLine: { show: false } },
+            { type: 'category', data: dates, gridIndex: 1,
+                axisLabel: { show: false },
+                axisLine: { lineStyle: { color: '#334' } },
+                splitLine: { show: false } },
+            { type: 'category', data: dates, gridIndex: 2,
+                axisLabel: { show: false },
+                axisLine: { lineStyle: { color: '#334' } },
+                splitLine: { show: false } },
+        ],
+        yAxis: [
+            { type: 'value', gridIndex: 0, scale: true,
+                axisLabel: { color: '#909399', fontSize: 10 },
+                splitLine: { lineStyle: { color: '#2a2a3e' } } },
+            { type: 'value', gridIndex: 1, scale: true,
+                axisLabel: { color: '#909399', fontSize: 9 },
+                splitLine: { show: false } },
+            { type: 'value', gridIndex: 2, scale: true,
+                axisLabel: { color: '#909399', fontSize: 9 },
+                splitLine: { lineStyle: { color: '#2a2a3e' } } },
+        ],
+        dataZoom: [
+            { type: 'inside', xAxisIndex: [0, 1, 2], start: 40, end: 100 },
+            { type: 'slider', xAxisIndex: [0, 1, 2], start: 40, end: 100,
+                height: 16, bottom: 2,
+                borderColor: '#334', backgroundColor: '#1a1a2e',
+                fillerColor: 'rgba(64,158,255,0.2)',
+                textStyle: { color: '#909399', fontSize: 9 } },
+        ],
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'cross' },
+            backgroundColor: 'rgba(30,30,50,0.95)',
+            borderColor: '#409eff',
+            textStyle: { color: '#e0e0e0', fontSize: 11 },
+        },
+        series: [
+            { name: '日K', type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0,
+                data: recs.map(r => [+r.open, +r.close, +r.low, +r.high]),
+                itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' } },
+            { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1,
+                data: recs.map(r => ({ value: r.volume, itemStyle: { color: r.close >= r.open ? '#f56c6c' : '#67c23a' } })) },
+            { name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#e6a23c',
+                data: ma5, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#e6a23c' } },
+            { name: 'MA10', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#409eff',
+                data: ma10, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#409eff' } },
+            { name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#b37feb',
+                data: ma20, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#b37feb' } },
+            { name: 'MA30', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#5cdbd3',
+                data: ma30, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#5cdbd3' } },
+            { name: 'MA60', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#ff85c0',
+                data: ma60, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#ff85c0' } },
+            { name: 'MA200', type: 'line', xAxisIndex: 0, yAxisIndex: 0, color: '#f0f0f0',
+                data: ma200, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#f0f0f0', type: 'dashed' } },
+            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: macdBarData },
+            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, color: '#fff',
+                data: dif, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#fff' } },
+            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, color: '#ffd666',
+                data: dea, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#ffd666' } },
+        ],
+        legend: {
+            data: ['MA5', 'MA10', 'MA20', 'MA30', 'MA60', 'MA200', '成交量', 'DIF', 'DEA'],
+            top: 0, right: 10, textStyle: { color: '#ccc', fontSize: 11 },
+            icon: 'roundRect',
+        },
+    }
+}
+
 async function loadKlineChart() {
     if (!result.value?.code) return
     let data
     klineLoading.value = true
     try {
-        const resp = await getLocalKline(result.value.code, 200)
+        const resp = await getLocalKline(result.value.code, 400)
         data = resp.data
         const recs = data.records || []
         if (recs.length < 20) { klineLoading.value = false; return }
 
         const dates = recs.map(r => r.date.slice(5, 10))
-        const opens = recs.map(r => r.open)
         const closes = recs.map(r => r.close)
-        const highs = recs.map(r => r.high)
-        const lows = recs.map(r => r.low)
-        const vols = recs.map(r => r.volume)
 
         const ma5 = calcSMA(closes, 5)
         const ma10 = calcSMA(closes, 10)
         const ma20 = calcSMA(closes, 20)
         const ma30 = calcSMA(closes, 30)
         const ma60 = calcSMA(closes, 60)
-
+        const ma200 = calcSMA(closes, 200)
         const { dif, dea, macd } = calcMACD(closes)
-
-        // 构建MACD柱图数据：正值红色，负值绿色
         const macdBarData = macd.map(v => ({
             value: +v.toFixed(4),
             itemStyle: { color: v >= 0 ? '#f56c6c' : '#67c23a' },
@@ -2078,123 +2188,12 @@ async function loadKlineChart() {
         await nextTick()
         if (!klineChartRef.value) { klineLoading.value = false; return }
 
-        // 等DOM完全稳定后再初始化图表
         await new Promise(r => setTimeout(r, 100))
 
         if (klineChartInstance) klineChartInstance.dispose()
         klineChartInstance = echarts.init(klineChartRef.value, null, { renderer: 'canvas' })
 
-        const option = {
-            backgroundColor: '#1a1a2e',
-            animation: false,
-            grid: [
-                { left: '6%', right: '3%', top: '4%', height: '50%' },
-                { left: '6%', right: '3%', top: '62%', height: '13%' },
-                { left: '6%', right: '3%', top: '78%', height: '16%' },
-            ],
-            xAxis: [
-                { type: 'category', data: dates, gridIndex: 0,
-                    axisLabel: { color: '#909399', fontSize: 10, interval: 20 },
-                    axisLine: { lineStyle: { color: '#334' } },
-                    splitLine: { show: false } },
-                { type: 'category', data: dates, gridIndex: 1,
-                    axisLabel: { show: false },
-                    axisLine: { lineStyle: { color: '#334' } },
-                    splitLine: { show: false } },
-                { type: 'category', data: dates, gridIndex: 2,
-                    axisLabel: { show: false },
-                    axisLine: { lineStyle: { color: '#334' } },
-                    splitLine: { show: false } },
-            ],
-            yAxis: [
-                { type: 'value', gridIndex: 0, scale: true,
-                    axisLabel: { color: '#909399', fontSize: 10 },
-                    splitLine: { lineStyle: { color: '#2a2a3e' } } },
-                { type: 'value', gridIndex: 1, scale: true,
-                    axisLabel: { color: '#909399', fontSize: 9 },
-                    splitLine: { show: false } },
-                { type: 'value', gridIndex: 2, scale: true,
-                    axisLabel: { color: '#909399', fontSize: 9 },
-                    splitLine: { lineStyle: { color: '#2a2a3e' } } },
-            ],
-            dataZoom: [
-                { type: 'inside', xAxisIndex: [0, 1, 2], start: 40, end: 100 },
-                { type: 'slider', xAxisIndex: [0, 1, 2], start: 40, end: 100,
-                    height: 16, bottom: 2,
-                    borderColor: '#334', backgroundColor: '#1a1a2e',
-                    fillerColor: 'rgba(64,158,255,0.2)',
-                    textStyle: { color: '#909399', fontSize: 9 } },
-            ],
-            tooltip: {
-                trigger: 'axis',
-                axisPointer: { type: 'cross' },
-                backgroundColor: 'rgba(30,30,50,0.95)',
-                borderColor: '#409eff',
-                textStyle: { color: '#e0e0e0', fontSize: 11 },
-            },
-            series: [
-                // 蜡烛图
-                {
-                    name: '日K', type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0,
-                    data: recs.map(r => [+r.open, +r.close, +r.low, +r.high]),
-                    itemStyle: {
-                        color: '#f56c6c', color0: '#67c23a',
-                        borderColor: '#f56c6c', borderColor0: '#67c23a',
-                    },
-                },
-                // 成交量柱
-                {
-                    name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1,
-                    data: recs.map(r => ({
-                        value: r.volume,
-                        itemStyle: { color: r.close >= r.open ? '#f56c6c' : '#67c23a' },
-                    })),
-                },
-                // MA5
-                { name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
-                    color: '#e6a23c',
-                    data: ma5, smooth: true, symbol: 'none',
-                    lineStyle: { width: 1.5, color: '#e6a23c' } },
-                // MA10
-                { name: 'MA10', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
-                    color: '#409eff',
-                    data: ma10, smooth: true, symbol: 'none',
-                    lineStyle: { width: 1.5, color: '#409eff' } },
-                // MA20
-                { name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
-                    color: '#b37feb',
-                    data: ma20, smooth: true, symbol: 'none',
-                    lineStyle: { width: 1.5, color: '#b37feb' } },
-                // MA30
-                { name: 'MA30', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
-                    color: '#5cdbd3',
-                    data: ma30, smooth: true, symbol: 'none',
-                    lineStyle: { width: 1.5, color: '#5cdbd3' } },
-                // MA60
-                { name: 'MA60', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
-                    color: '#ff85c0',
-                    data: ma60, smooth: true, symbol: 'none',
-                    lineStyle: { width: 1.5, color: '#ff85c0' } },
-                // MACD柱状图
-                {
-                    name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2,
-                    data: macdBarData,
-                },
-                // DIF线
-                { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
-                    data: dif, smooth: true, symbol: 'none',
-                    lineStyle: { width: 1, color: '#fff' } },
-                // DEA线
-                { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
-                    data: dea, smooth: true, symbol: 'none',
-                    lineStyle: { width: 1, color: '#ffd666' } },
-            ],
-            legend: {
-                data: ['MA5', 'MA10', 'MA20', 'MA30', 'MA60', '成交量', 'DIF', 'DEA'],
-                top: 0, right: 10, textStyle: { color: '#ccc', fontSize: 11 },
-                icon: 'roundRect',
-            },
-        }
+        const option = buildKlineOption({ recs, dates, ma5, ma10, ma20, ma30, ma60, ma200, dif, dea, macdBarData }, false)
         klineChartInstance.setOption(option)
         // 量价分析
         calcVolumeAnalysis(recs)

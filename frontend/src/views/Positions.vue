@@ -102,9 +102,10 @@
                             </el-tag>
                         </template>
                     </el-table-column>
-                    <el-table-column label="操作" width="140">
+                    <el-table-column label="操作" width="200">
                         <template #default="{ row }">
                             <el-button size="small" text @click="handleEdit(row)">编辑</el-button>
+                            <el-button size="small" text @click="$router.push('/trading-plans')">计划</el-button>
                             <el-popconfirm title="确定删除？" @confirm="handleDelete(row.code)">
                                 <template #reference>
                                     <el-button type="danger" size="small" link>删除</el-button>

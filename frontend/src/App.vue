@@ -15,6 +15,10 @@
                 text-color="#ffffffb3"
                 active-text-color="#fff"
             >
+                <el-menu-item index="/ai-driven">
+                    <el-icon><MagicStick /></el-icon>
+                    <span>🤖 AI研报</span>
+                </el-menu-item>
                 <el-sub-menu index="dashboard-group">
                     <template #title>
                         <el-icon><DataAnalysis /></el-icon>
@@ -52,6 +56,14 @@
                         <span>📊 持仓分析</span>
                     </el-menu-item>
                 </el-sub-menu>
+                <el-menu-item index="/trading-plans">
+                    <el-icon><List /></el-icon>
+                    <span>交易计划</span>
+                </el-menu-item>
+                <el-menu-item index="/strategy-backtest">
+                    <el-icon><TrendCharts /></el-icon>
+                    <span>策略回测</span>
+                </el-menu-item>
                 <el-menu-item index="/analysis">
                     <el-icon><Search /></el-icon>
                     <span>个股分析</span>
