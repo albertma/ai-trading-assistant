@@ -152,6 +152,84 @@
             </div>
         </el-card>
 
+        <!-- ═══ 板块前瞻（技术面信号+AI研判） ═══ -->
+        <el-card class="forward-card" style="margin-top:12px;" v-if="forwardData">
+            <template #header>
+                <div class="card-header">
+                    <b>📈 板块前瞻</b>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <el-tag size="small" type="success" effect="dark" v-if="forwardData.summary">{{ forwardData.summary.bullish }}看多</el-tag>
+                        <el-tag size="small" type="warning" effect="dark" v-if="forwardData.summary">{{ forwardData.summary.neutral }}中性</el-tag>
+                        <el-tag size="small" type="danger" effect="dark" v-if="forwardData.summary">{{ forwardData.summary.bearish }}看空</el-tag>
+                        <el-button size="small" @click="loadForward" :loading="forwardLoading" plain>🔄 刷新前瞻</el-button>
+                    </div>
+                </div>
+            </template>
+
+            <!-- AI总体判断 -->
+            <div class="forward-ai-summary" v-if="forwardData.ai_analysis && forwardData.ai_analysis.summary && !forwardData.ai_analysis.error">
+                <span class="ai-label">🤖 AI研判</span>
+                <span class="ai-text">{{ forwardData.ai_analysis.summary }}</span>
+            </div>
+            <div class="forward-ai-summary" v-else-if="forwardData.ai_analysis && forwardData.ai_analysis.error">
+                <span class="ai-label">🤖 AI研判</span>
+                <span class="ai-text ai-error">暂不可用（{{ forwardData.ai_analysis.error }}）</span>
+            </div>
+
+            <!-- AI板块列表 -->
+            <div class="forward-ai-sectors" v-if="forwardData.ai_analysis && forwardData.ai_analysis.sectors">
+                <div v-for="s in forwardData.ai_analysis.sectors" :key="s.name"
+                    class="forward-ai-item"
+                    :class="'signal-' + s.signal"
+                    @click="showSectorDetailByName(s.name)">
+                    <span class="forward-dot">{{ {'bullish':'🟢','bearish':'🔴','neutral':'🟡'}[s.signal] || '⚪' }}</span>
+                    <span class="forward-name">{{ s.name }}</span>
+                    <span class="forward-reason">{{ s.reason }}</span>
+                    <span class="forward-level" v-if="s.key_level">{{ s.key_level }}</span>
+                </div>
+            </div>
+
+            <!-- RPS Top 5 -->
+            <div class="forward-rps" v-if="forwardData.rps_top5 && forwardData.rps_top5.length">
+                <div class="section-subtitle">📊 相对强度TOP5（RPS 5日）</div>
+                <div class="rps-chips">
+                    <el-tag v-for="s in forwardData.rps_top5" :key="s.name"
+                        size="small" effect="plain" style="cursor:pointer;margin:2px;"
+                        @click="showSectorDetailByName(s.name)">
+                        #{{ s.rps_rank_5d }} {{ s.name }}
+                    </el-tag>
+                </div>
+            </div>
+
+            <!-- RL强化学习预测 -->
+            <div class="forward-rl" v-if="forwardData.rl_analysis && forwardData.rl_analysis.verdict && !forwardData.rl_analysis.error">
+                <div class="section-subtitle">🧠 RL强化学习预测</div>
+                <div class="rl-header">
+                    <el-tag :type="rlVerdictType" effect="dark" size="small" style="color:#fff;">
+                        整体判断：{{ forwardData.rl_analysis.verdict }}
+                    </el-tag>
+                    <el-tag v-if="forwardData.rl_analysis.confidence" size="small" type="info" effect="plain">
+                        置信度 {{ (forwardData.rl_analysis.confidence * 100).toFixed(0) }}%
+                    </el-tag>
+                </div>
+                <div class="rl-picks" v-if="forwardData.rl_top_picks">
+                    <div v-for="p in forwardData.rl_top_picks.slice(0, 8)" :key="p.sector"
+                        class="rl-item" @click="showSectorDetailByName(p.sector)">
+                        <span class="rl-dot">{{ p.prediction === 'up' ? '🟢' : '🔴' }}</span>
+                        <span class="rl-name">{{ p.sector }}</span>
+                        <span class="rl-bar-wrap">
+                            <span class="rl-bar" :style="{ width: (p.prob_up * 100) + '%', background: p.prob_up > 0.7 ? '#67c23a' : p.prob_up > 0.5 ? '#e6a23c' : '#f56c6c' }"></span>
+                        </span>
+                        <span class="rl-prob">{{ (p.prob_up * 100).toFixed(0) }}%</span>
+                    </div>
+                </div>
+            </div>
+            <div class="forward-rl" v-else-if="forwardData.rl_analysis && forwardData.rl_analysis.error">
+                <div class="section-subtitle">🧠 RL强化学习</div>
+                <span style="font-size:12px;color:#999;">模型未就绪</span>
+            </div>
+        </el-card>
+
         <!-- ═══ 板块详情列表（Tabs：周期相位 / 指数走势） ═══ -->
         <el-card style="margin-top:16px;">
             <el-tabs v-model="detailTab" @tab-click="onTabChange">
@@ -362,6 +440,8 @@ const sectorStockLoading = ref(false)
 
 const sectorHistory = ref([])
 const predictionActive = ref([])  // 默认折叠
+const forwardData = ref(null)
+const forwardLoading = ref(false)
 
 const detailTab = ref('phases')
 
@@ -390,9 +470,17 @@ const filteredSectors = computed(() => {
     return result
 })
 
+const rlVerdictType = computed(() => {
+    const v = forwardData.value?.rl_analysis?.verdict
+    if (v === '偏多') return 'success'
+    if (v === '偏空') return 'danger'
+    return 'warning'
+})
+
 onMounted(async () => {
     await loadDates()
     await loadData()
+    await loadForward()
 })
 
 function disabledDate(time) {
@@ -454,6 +542,22 @@ async function computeSectorAnalysis() {
         ElMessage.error('计算失败: ' + (e.response?.data?.detail || e.message))
     } finally {
         computing.value = false
+    }
+}
+
+// ── 板块前瞻 ──
+async function loadForward() {
+    forwardLoading.value = true
+    try {
+        const targetDate = selectedDate.value || undefined
+        const { data } = await axios.get(`${API_BASE}/sector-forward`, {
+            params: targetDate ? { date: targetDate } : {}
+        })
+        forwardData.value = data
+    } catch (e) {
+        ElMessage.warning('板块前瞻加载失败: ' + (e.response?.data?.detail || e.message))
+    } finally {
+        forwardLoading.value = false
     }
 }
 
@@ -859,4 +963,47 @@ watch(indexChartRef, () => {
 :deep(.highlight-row td) {
     background-color: #fdf6ec;
 }
+
+/* ── 板块前瞻 ── */
+.forward-card {}
+.forward-card .card-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.forward-ai-summary {
+    background: #f0f5ff; border-radius: 6px; padding: 10px 14px;
+    margin-bottom: 12px; display: flex; align-items: flex-start; gap: 8px;
+}
+.forward-ai-summary .ai-label { flex-shrink: 0; font-weight: 600; font-size: 13px; }
+.forward-ai-summary .ai-text { font-size: 14px; color: #2c5282; line-height: 1.6; }
+.forward-ai-summary .ai-text.ai-error { color: #999; font-size: 13px; }
+.forward-ai-sectors { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.forward-ai-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: 6px; cursor: pointer;
+    transition: background 0.15s;
+}
+.forward-ai-item:hover { background: #f5f7fa; }
+.forward-ai-item.signal-bullish { border-left: 3px solid #67c23a; }
+.forward-ai-item.signal-neutral { border-left: 3px solid #e6a23c; }
+.forward-ai-item.signal-bearish { border-left: 3px solid #f56c6c; }
+.forward-dot { flex-shrink: 0; font-size: 14px; }
+.forward-name { font-weight: 600; font-size: 13px; min-width: 80px; color: #303133; }
+.forward-reason { font-size: 12px; color: #666; flex: 1; }
+.forward-level { font-size: 11px; color: #999; background: #f0f0f0; padding: 1px 6px; border-radius: 3px; flex-shrink: 0; }
+.section-subtitle { font-size: 13px; font-weight: 600; color: #606266; margin-bottom: 6px; }
+.forward-rps { margin-top: 8px; }
+.rps-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* RL强化学习 */
+.forward-rl { margin-top: 12px; padding-top: 10px; border-top: 1px solid #ebeef5; }
+.rl-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.rl-picks { display: flex; flex-direction: column; gap: 3px; }
+.rl-item {
+    display: flex; align-items: center; gap: 6px; padding: 3px 6px;
+    border-radius: 4px; cursor: pointer; font-size: 12px;
+}
+.rl-item:hover { background: #f0f5ff; }
+.rl-dot { flex-shrink: 0; font-size: 12px; }
+.rl-name { min-width: 72px; font-weight: 600; color: #303133; font-size: 12px; }
+.rl-bar-wrap { flex: 1; height: 10px; background: #f0f0f0; border-radius: 5px; overflow: hidden; }
+.rl-bar { height: 100%; border-radius: 5px; transition: width 0.3s; }
+.rl-prob { width: 30px; text-align: right; color: #666; font-size: 11px; font-weight: 600; }
 </style>

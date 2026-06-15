@@ -1827,3 +1827,29 @@ def compute_sector_analysis_api(
 
     results["status"] = "ok"
     return results
+
+
+@router.get("/sector-forward")
+def sector_forward_api(
+    date_str: str = Query(None, alias="date"),
+):
+    """板块前瞻 — 技术面指标 + AI综合研判"""
+    from backend.services.analyze.sector_forward import run
+    result = run(date_str)
+    return result
+
+
+@router.post("/sector-rl/retrain")
+def sector_rl_retrain_api():
+    """重新训练RL板块预测模型"""
+    import subprocess, sys
+    result = subprocess.run(
+        [sys.executable, "backend/services/analyze/sector_rl.py"],
+        capture_output=True, text=True, timeout=300,
+    )
+    return {
+        "status": "ok" if result.returncode == 0 else "failed",
+        "returncode": result.returncode,
+        "stdout": result.stdout[-500:],
+        "stderr": result.stderr[-500:],
+    }

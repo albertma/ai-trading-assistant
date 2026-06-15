@@ -1208,7 +1208,7 @@
                         </template>
                         <el-descriptions :column="4" border size="small">
                             <el-descriptions-item label="行业">{{ archiveData.sector }}</el-descriptions-item>
-                            <el-descriptions-item label="最新价">{{ archiveData.price }}</el-descriptions-item>
+                            <el-descriptions-item label="最新价">{{ archiveData.price ?? '--' }}</el-descriptions-item>
                             <el-descriptions-item label="涨跌幅">
                                 <span :style="{ color: (archiveData.change_pct||0) >= 0 ? '#f56c6c' : '#67c23a' }">{{ archiveData.change_pct }}%</span>
                             </el-descriptions-item>
@@ -1219,7 +1219,7 @@
                             <el-descriptions-item label="最新财报">{{ archiveData.latest_report || '--' }}</el-descriptions-item>
                             <el-descriptions-item label="营收(亿)">{{ archiveData.revenue || '--' }}</el-descriptions-item>
                             <el-descriptions-item label="净利(亿)">{{ archiveData.net_profit || '--' }}</el-descriptions-item>
-                            <el-descriptions-item label="毛利率">{{ archiveData.gross_margin ? archiveData.gross_margin+'%' : '--' }}</el-descriptions-item>
+                            <el-descriptions-item label="毛利率">{{ archiveData.gross_margin != null ? archiveData.gross_margin+'%' : '--' }}</el-descriptions-item>
                             <el-descriptions-item label="ROE">{{ archiveData.roe ? archiveData.roe+'%' : '--' }}</el-descriptions-item>
                             <el-descriptions-item label="EPS">{{ archiveData.eps || '--' }}</el-descriptions-item>
                             <el-descriptions-item label="负债率">{{ archiveData.debt_ratio ? archiveData.debt_ratio+'%' : '--' }}</el-descriptions-item>
@@ -2267,6 +2267,9 @@ watch(activeTab, (tab) => {
     if (tab === 'fundamental' && result.value?.code && !expenseData.value) {
         nextTick(() => loadExpenseData())
     }
+    if (tab === 'archive' && result.value?.code && !archiveData.value) {
+        nextTick(() => loadArchive(result.value.code))
+    }
 })
 // 分析结果加载后，如果K线tab正激活则自动渲染图表
 watch(result, (val) => {
@@ -2305,6 +2308,9 @@ function onTabClick(tab) {
     }
     if (tab.props.name === 'industry' && result.value?.code) {
         nextTick(() => loadIndustryOutlookData())
+    }
+    if (tab.props.name === 'archive' && result.value?.code) {
+        nextTick(() => { if (!archiveData.value) loadArchive(result.value.code) })
     }
 }
 

@@ -163,7 +163,7 @@ def stock_profile(code: str):
 
     worker = threading.Thread(target=_do_work, daemon=True)
     worker.start()
-    worker.join(timeout=20)
+    worker.join(timeout=35)
 
     if result_box.get("profile"):
         return result_box["profile"]
