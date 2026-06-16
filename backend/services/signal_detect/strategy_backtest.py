@@ -575,3 +575,171 @@ def delete_batch(batch_id: str) -> bool:
     ok = cur.rowcount > 0
     conn.close()
     return ok
+
+
+# ═══════════════════════════════════════════════════════════════
+# 当前实时信号检测（只看最后一根K线）
+# ═══════════════════════════════════════════════════════════════
+
+def check_current_signal(
+    code: str,
+    entry_signal: str = "",
+    strategy: str = "",
+    max_days: int = 500,
+    params: Optional[dict] = None,
+) -> Optional[dict]:
+    """
+    检查某只股票当前是否触发买入信号（只在最后一根K线判断）。
+
+    返回结构:
+    {
+        "triggered": bool,
+        "signal_detail": str,        # 信号类型描述
+        "confidence": float,          # 0-100 置信度
+        "entry_price": float,         # 当前收盘价（入场参考价）
+        "stop_loss_price": float,     # 止损价
+        "target_price": float,        # 目标价
+        "risk_reward_ratio": float,   # 盈亏比
+        "current_price": float,       # 当前收盘价
+        "ma60_support": float,        # MA60支撑位
+        "consolidation_low": float,   # 筑底期最低价
+    }
+    若未触发返回 {"triggered": False}
+    """
+    from backend.services.market_service import get_daily_history
+
+    # 解析策略
+    if strategy and strategy in STRATEGY_PRESETS:
+        entry_name, _, _ = STRATEGY_PRESETS[strategy]
+    elif entry_signal and entry_signal in ENTRY_SIGNALS:
+        entry_name = entry_signal
+    else:
+        return {"triggered": False}
+
+    entry_info = ENTRY_SIGNALS.get(entry_name)
+    if not entry_info:
+        return {"triggered": False}
+
+    entry_fn = entry_info["func"]
+    params = params or {}
+
+    # 取数据
+    daily_df = get_daily_history(code, max_days)
+    if daily_df is None or daily_df.empty or len(daily_df) < 220:
+        return {"triggered": False}
+
+    df = daily_df.copy()
+    closes = df["close"].values.astype(float)
+    highs = df["high"].values.astype(float)
+    lows = df["low"].values.astype(float)
+    opens = df["open"].values.astype(float)
+    volumes = df["volume"].values.astype(float) if "volume" in df.columns else np.ones(len(closes))
+    n = len(closes)
+
+    # 预计算指标（与 run_backtest 保持一致）
+    frag = params.get("fast", 5)
+    fslo = params.get("slow", 10)
+    macd_fast = params.get("macd_fast", 12)
+    macd_slow = params.get("macd_slow", 26)
+    macd_signal = params.get("macd_signal", 9)
+
+    ma_fast = _calc_sma(closes, frag)
+    ma_slow = _calc_sma(closes, fslo)
+    ma_20 = _calc_sma(closes, params.get("ma_20_period", 20))
+    ma_60 = _calc_sma(closes, params.get("ma_60_period", 60))
+    ma_120 = _calc_sma(closes, 120)
+    macd_line, macd_signal_line, macd_hist = calc_macd(closes, macd_fast, macd_slow, macd_signal)
+
+    # 只在最后一根K线检测
+    i = n - 1
+
+    try:
+        result = entry_fn(
+            i=i, closes=closes, highs=highs, lows=lows,
+            opens=opens, volumes=volumes,
+            macd_line=macd_line, macd_signal_line=macd_signal_line,
+            ma_fast=ma_fast, ma_slow=ma_slow, ma_20=ma_20, ma_60=ma_60,
+            weekly_mode=False, ma_120=ma_120,
+            **params,
+        )
+    except Exception:
+        return {"triggered": False}
+
+    if result is None:
+        return {"triggered": False}
+
+    signal_detail = result.get("signal", f"{entry_info['label']}")
+
+    # ── 计算置信度 ──
+    # ① DIF强度 (0-30)
+    dif_val = macd_line[i] if not np.isnan(macd_line[i]) else 0
+    dif_thresh = params.get("dif_thresh", -1.0)
+    dif_strength = min(30, max(0, (dif_val - dif_thresh) * 5 + 10))
+
+    # ② 成交量确认 (0-25)
+    vol_ma5 = sma(volumes, 5)[i] if i >= 5 else 0
+    vol_ma10 = sma(volumes, 10)[i] if i >= 10 else 0
+    vol_score = 0
+    if vol_ma5 > 0 and volumes[i] > vol_ma5:
+        vol_ratio = volumes[i] / vol_ma5
+        vol_score = min(25, vol_ratio * 8)
+    elif vol_ma10 > 0 and vol_ma5 > vol_ma10:
+        vol_score = 15
+
+    # ③ MA60支撑强度 (0-20)
+    if not np.isnan(ma_60[i]) and ma_60[i] > 0:
+        support_dist = (closes[i] - ma_60[i]) / ma_60[i]
+        if 0 < support_dist < 0.08:
+            support_score = 20 - (support_dist / 0.08) * 10
+        elif support_dist >= 0.08:
+            support_score = 10
+        else:
+            support_score = 5  # 已经跌破MA60
+    else:
+        support_score = 5
+
+    # ④ K线形态质量 (0-25)
+    body_ratio = abs(closes[i] - opens[i]) / max(highs[i] - lows[i], 0.01)
+    candle_score = 0
+    if body_ratio < 0.3:
+        candle_score = 20  # 小实体 = 蓄力充分
+    elif body_ratio < 0.5:
+        candle_score = 15
+    elif closes[i] > opens[i]:
+        candle_score = 10  # 阳线
+    else:
+        candle_score = 5
+
+    confidence = min(100, round(dif_strength + vol_score + support_score + candle_score))
+
+    # ── 价格水平计算 ──
+    entry_price = round(closes[i], 2)
+
+    # 止损价: MA60下3% or 筑底期最低价下1%
+    consolidation_low = min(lows[max(0, i - 45):i + 1])
+    stop_loss = max(
+        round(ma_60[i] * 0.97, 2) if not np.isnan(ma_60[i]) else 0,
+        round(consolidation_low * 0.99, 2),
+    )
+
+    # 目标价: 死叉前的高点（回调前的高位）
+    # 找最近60天的最高点
+    target_price = round(max(highs[max(0, i - 60):i + 1]) * 1.05, 2)
+
+    # 盈亏比
+    risk = entry_price - stop_loss
+    reward = target_price - entry_price
+    rr_ratio = round(reward / risk, 2) if risk > 0 else 99.99
+
+    return {
+        "triggered": True,
+        "signal_detail": signal_detail,
+        "confidence": confidence,
+        "entry_price": entry_price,
+        "stop_loss_price": stop_loss,
+        "target_price": target_price,
+        "risk_reward_ratio": rr_ratio,
+        "current_price": entry_price,
+        "ma60_support": round(ma_60[i], 2) if not np.isnan(ma_60[i]) else 0,
+        "consolidation_low": round(consolidation_low, 2),
+    }

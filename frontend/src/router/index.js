@@ -18,10 +18,13 @@ import NewsOverview from '../views/NewsOverview.vue'
 import TradingPlans from '../views/TradingPlans.vue'
 import StrategyBacktest from '../views/StrategyBacktest.vue'
 import AIDrivenReport from '../views/AIDrivenReport.vue'
+import StrategyResearch from '../views/StrategyResearch.vue'
+import StrategyCreate from '../views/StrategyCreate.vue'
+import StrategyConfig from '../views/StrategyConfig.vue'
 
 const routes = [
     { path: '/', name: 'Dashboard', component: Dashboard, meta: { title: '市场概览', icon: 'DataAnalysis' } },
-    { path: '/ai-driven', name: 'AIDrivenReport', component: AIDrivenReport, meta: { title: 'AI研报', icon: 'MagicStick' } },
+    { path: '/ai-driven', name: 'AIDrivenReport', component: AIDrivenReport, meta: { title: 'AI检测', icon: 'MagicStick' } },
     { path: '/sector-analysis', name: 'SectorAnalysis', component: SectorAnalysis, meta: { title: '板块分析', icon: 'DataBoard' } },
     { path: '/watchlist', name: 'Watchlist', component: Watchlist, meta: { title: '观察池', icon: 'View' } },
     { path: '/positions', name: 'Positions', component: Positions, meta: { title: '持仓看板', icon: 'Wallet' } },
@@ -39,6 +42,10 @@ const routes = [
     { path: '/news-overview', name: 'NewsOverview', component: NewsOverview, meta: { title: '新闻分析', icon: 'Reading' } },
     { path: '/trading-plans', name: 'TradingPlans', component: TradingPlans, meta: { title: '交易计划', icon: 'List' } },
     { path: '/strategy-backtest', name: 'StrategyBacktest', component: StrategyBacktest, meta: { title: '策略回测', icon: 'TrendCharts' } },
+    { path: '/strategy-research', name: 'StrategyResearch', component: StrategyResearch, meta: { title: '策略管理', icon: 'Files' } },
+    { path: '/strategy-create', name: 'StrategyCreate', component: StrategyCreate, meta: { title: '策略创建', icon: 'Edit' } },
+    { path: '/strategy-create/:id', name: 'StrategyEdit', component: StrategyCreate, meta: { title: '编辑策略', icon: 'Edit' } },
+    { path: '/strategy-config', name: 'StrategyConfig', component: StrategyConfig, meta: { title: '策略配置', icon: 'Setting' } },
 ]
 
 const router = createRouter({

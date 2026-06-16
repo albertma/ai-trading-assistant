@@ -1,0 +1,406 @@
+{
+  "summary": {
+    "passed": 0,
+    "failed": 22,
+    "total": 23
+  },
+  "details": [
+    {
+      "sector": "IT服务Ⅱ",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 5,
+        "max_days": 60,
+        "vol_ratio": 0.6,
+        "ma60_tol": 0.9,
+        "dif_thresh": -1,
+        "gc_window": 7
+      }
+    },
+    {
+      "sector": "专用设备",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 5,
+        "max_days": 90,
+        "vol_ratio": 0.4,
+        "ma60_tol": 0.95,
+        "dif_thresh": -3,
+        "gc_window": 7
+      }
+    },
+    {
+      "sector": "中药Ⅱ",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 30,
+        "max_days": 35,
+        "vol_ratio": 0.3,
+        "ma60_tol": 0.95,
+        "dif_thresh": -3,
+        "gc_window": 7
+      }
+    },
+    {
+      "sector": "元件",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 30,
+        "max_days": 35,
+        "vol_ratio": 0.4,
+        "ma60_tol": 0.93,
+        "dif_thresh": 2,
+        "gc_window": 7
+      }
+    },
+    {
+      "sector": "光伏设备",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 30,
+        "max_days": 75,
+        "vol_ratio": 0.4,
+        "ma60_tol": 0.93,
+        "dif_thresh": -3,
+        "gc_window": 10
+      }
+    },
+    {
+      "sector": "军工电子Ⅱ",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 20,
+        "max_days": 45,
+        "vol_ratio": 0.3,
+        "ma60_tol": 0.9,
+        "dif_thresh": -5,
+        "gc_window": 5
+      }
+    },
+    {
+      "sector": "化学制品",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 25,
+        "max_days": 75,
+        "vol_ratio": 0.6,
+        "ma60_tol": 0.9,
+        "dif_thresh": -3,
+        "gc_window": 10
+      }
+    },
+    {
+      "sector": "化学制药",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 25,
+        "max_days": 75,
+        "vol_ratio": 0.6,
+        "ma60_tol": 0.9,
+        "dif_thresh": -1,
+        "gc_window": 7
+      }
+    },
+    {
+      "sector": "医疗器械",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 30,
+        "max_days": 60,
+        "vol_ratio": 0.5,
+        "ma60_tol": 0.97,
+        "dif_thresh": -1,
+        "gc_window": 10
+      }
+    },
+    {
+      "sector": "多元金融",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 20,
+        "max_days": 45,
+        "vol_ratio": 0.6,
+        "ma60_tol": 0.9,
+        "dif_thresh": -3,
+        "gc_window": 10
+      }
+    },
+    {
+      "sector": "工业金属",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 20,
+        "max_days": 60,
+        "vol_ratio": 0.6,
+        "ma60_tol": 0.97,
+        "dif_thresh": -5,
+        "gc_window": 7
+      }
+    },
+    {
+      "sector": "汽车零部件",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 30,
+        "max_days": 45,
+        "vol_ratio": 0.5,
+        "ma60_tol": 0.95,
+        "dif_thresh": -3,
+        "gc_window": 10
+      }
+    },
+    {
+      "sector": "消费电子",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 25,
+        "max_days": 45,
+        "vol_ratio": 0.6,
+        "ma60_tol": 0.97,
+        "dif_thresh": -5,
+        "gc_window": 10
+      }
+    },
+    {
+      "sector": "煤炭开采",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 25,
+        "max_days": 25,
+        "vol_ratio": 0.5,
+        "ma60_tol": 0.98,
+        "dif_thresh": -5,
+        "gc_window": 3
+      }
+    },
+    {
+      "sector": "生物制品",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 5,
+        "max_days": 75,
+        "vol_ratio": 0.3,
+        "ma60_tol": 0.9,
+        "dif_thresh": -5,
+        "gc_window": 7
+      }
+    },
+    {
+      "sector": "电力",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 30,
+        "max_days": 35,
+        "vol_ratio": 0.6,
+        "ma60_tol": 0.9,
+        "dif_thresh": -3,
+        "gc_window": 5
+      }
+    },
+    {
+      "sector": "电池",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 15,
+        "max_days": 25,
+        "vol_ratio": 0.2,
+        "ma60_tol": 0.95,
+        "dif_thresh": 2,
+        "gc_window": 3
+      }
+    },
+    {
+      "sector": "电网设备",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 20,
+        "max_days": 25,
+        "vol_ratio": 0.3,
+        "ma60_tol": 0.98,
+        "dif_thresh": 0,
+        "gc_window": 5
+      }
+    },
+    {
+      "sector": "航空装备Ⅱ",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 30,
+        "max_days": 60,
+        "vol_ratio": 0.4,
+        "ma60_tol": 0.93,
+        "dif_thresh": -5,
+        "gc_window": 5
+      }
+    },
+    {
+      "sector": "证券Ⅱ",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 15,
+        "max_days": 60,
+        "vol_ratio": 0.6,
+        "ma60_tol": 0.9,
+        "dif_thresh": -1,
+        "gc_window": 7
+      }
+    },
+    {
+      "sector": "软件开发",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 20,
+        "max_days": 60,
+        "vol_ratio": 0.5,
+        "ma60_tol": 0.93,
+        "dif_thresh": 0,
+        "gc_window": 3
+      }
+    },
+    {
+      "sector": "通信设备",
+      "base_wr": 0,
+      "base_pnl": 0,
+      "base_trades": 0,
+      "rl_wr": 0,
+      "rl_pnl": 0,
+      "rl_trades": 0,
+      "conclusion": "❌ RL不如基线",
+      "rl_params": {
+        "min_days": 30,
+        "max_days": 45,
+        "vol_ratio": 0.4,
+        "ma60_tol": 0.97,
+        "dif_thresh": 0,
+        "gc_window": 3
+      }
+    }
+  ],
+  "timestamp": "2026-06-15 14:35:32"
+}

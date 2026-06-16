@@ -446,8 +446,8 @@ def get_concept_board_constituents(board_name: str) -> list[dict]:
 def get_hk_stock_daily_price(code: str) -> float | None:
     """stock_hk_daily：获取港股最近交易日收盘价（不复权），自动缓存到 kline_daily"""
     # 先查缓存
-    from backend.services.database.stock_db import get_db
-    conn = get_db()
+    from backend.services.database.stock_db import get_kline_db
+    conn = get_kline_db()
     row = conn.execute(
         "SELECT close, date FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT 1",
         (f"hk_{code}",)
@@ -510,8 +510,8 @@ def get_hk_stock_name(code: str) -> str | None:
 def get_us_stock_daily_price(code: str) -> float | None:
     """stock_us_daily：获取美股最近交易日收盘价（不复权），自动缓存到 kline_daily"""
     # 先查缓存
-    from backend.services.database.stock_db import get_db
-    conn = get_db()
+    from backend.services.database.stock_db import get_kline_db
+    conn = get_kline_db()
     row = conn.execute(
         "SELECT close, date FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT 1",
         (f"us_{code}",)

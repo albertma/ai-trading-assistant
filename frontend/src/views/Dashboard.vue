@@ -1,5 +1,11 @@
 <template>
     <div class="dashboard">
+        <!-- 构建版本号 -->
+        <div style="position:fixed;right:12px;top:52px;z-index:999;font-size:10px;color:#c0c4cc;text-align:right;line-height:1.4;">
+            <div>v{{ buildVersion.version || '-' }}</div>
+            <div>{{ (buildVersion.build_time || '').slice(11,16) }}</div>
+        </div>
+
         <!-- 日期选择条 -->
         <el-card shadow="hover" style="margin-bottom: 16px;">
             <el-row :gutter="16" align="middle">
@@ -290,6 +296,218 @@
             </el-card>
         </template>
 
+        <!-- ===== 策略信号卡片 ===== -->
+        <el-card shadow="hover"
+            style="margin-top:16px;border:1px solid #67c23a;">
+            <template #header>
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div>
+                        <b>📡 策略信号</b>
+                        <el-tag v-if="signalSummary.total" size="small" type="success" style="margin-left:8px;">
+                            {{ signalSummary.triggered }}只触发
+                        </el-tag>
+                        <el-tag v-if="signalSummary.total" size="small" style="margin-left:4px;">
+                            {{ signalSummary.total }}只扫描
+                        </el-tag>
+                    </div>
+                    <div>
+                        <el-button size="small" plain @click="showSignalConfig = !showSignalConfig"
+                            style="margin-right:4px;">
+                            ⚙️ 策略配置
+                        </el-button>
+                        <el-button size="small" type="success" plain @click="loadSignals"
+                            :loading="loadingSignals">
+                            🔄 刷新
+                        </el-button>
+                        <el-button size="small" type="primary" plain @click="triggerStrategyScan"
+                            :loading="strategyScanning" :disabled="strategyScanning"
+                            style="margin-left:4px;">
+                            {{ strategyScanning ? '扫描中...' : '🔍 策略扫描' }}
+                        </el-button>
+                    </div>
+                </div>
+            </template>
+            <!-- 策略配置面板 -->
+            <div v-if="showSignalConfig" style="margin-bottom:12px;border:1px solid #ebeef5;border-radius:6px;overflow:hidden;">
+                <div style="padding:8px 12px;background:#f9f9f9;font-size:13px;font-weight:bold;border-bottom:1px solid #ebeef5;">
+                    维度权重配置
+                </div>
+                <div style="padding:8px 12px;">
+                    <div v-for="(w, dim) in dimensionWeights" :key="dim"
+                        style="display:flex;align-items:center;margin-bottom:6px;">
+                        <div style="width:80px;font-size:13px;">{{ dimLabel[dim] || dim }}</div>
+                        <el-slider v-model="dimensionWeights[dim]" :min="0.1" :max="3.0" :step="0.1"
+                            style="flex:1;margin:0 12px;" @change="(v) => updateWeight(dim, v)" />
+                        <div style="width:40px;text-align:right;font-size:12px;color:#909399;">{{ w.toFixed(1) }}</div>
+                    </div>
+                </div>
+            </div>
+            <!-- 信号列表 -->
+            <div v-if="!signalStrategies.length" style="text-align:center;padding:24px 0;color:#909399;font-size:13px;">
+                暂无信号数据，请先执行扫描
+            </div>
+            <div v-for="stg in signalStrategies" :key="stg.id"
+                style="border:1px solid #ebeef5;border-radius:6px;margin-bottom:8px;overflow:hidden;">
+                <div @click="toggleSignalExpand(stg.id)"
+                    style="display:flex;align-items:center;padding:6px 12px;cursor:pointer;user-select:none;">
+                    <div style="width:14px;text-align:center;color:#909399;font-size:11px;margin-right:4px;">
+                        {{ signalExpandedSet.has(stg.id) ? '▼' : '▶' }}
+                    </div>
+                    <el-tag size="small" :type="signalDimColor(stg.dimension)" effect="plain" style="margin-right:6px;">
+                        {{ stg.dimension === 'technical' ? '技术' : (stg.dimension === 'fundamental' ? '基本' : (stg.dimension === 'narrative' ? '叙事' : (stg.dimension === 'capital_flow' ? '资金' : '情绪'))) }}
+                    </el-tag>
+                    <div style="flex:1;font-size:13px;font-weight:bold;">{{ stg.name }}</div>
+                    <div style="width:100px;text-align:right;">
+                        <el-tag v-if="stg.triggered_count" size="small" :type="stg.triggered_count > 0 ? 'success' : 'info'">
+                            {{ stg.triggered_count }}只信号
+                        </el-tag>
+                    </div>
+                </div>
+                <div v-if="signalExpandedSet.has(stg.id) && stg.triggered_stocks.length">
+                    <div v-for="st in stg.triggered_stocks" :key="st.code"
+                        style="display:flex;align-items:center;padding:4px 12px 4px 30px;border-top:1px solid #f5f5f5;font-size:12px;">
+                        <router-link :to="'/analysis?code=' + st.code"
+                            style="width:100px;color:#409eff;text-decoration:none;">{{ st.name }}</router-link>
+                        <div style="width:40px;text-align:center;font-weight:bold;"
+                            :style="{color: st.confidence >= 60 ? '#67c23a' : '#e6a23c'}">
+                            {{ st.confidence }}
+                        </div>
+                        <div style="width:80px;text-align:center;font-size:11px;color:#909399;">
+                            ￥{{ st.entry_price }}
+                        </div>
+                        <div style="width:80px;text-align:center;font-size:11px;color:#f56c6c;">
+                            S{{ st.stop_loss }}
+                        </div>
+                        <div style="width:80px;text-align:center;font-size:11px;color:#67c23a;">
+                            T{{ st.target_price }}
+                        </div>
+                        <div style="flex:1;color:#909399;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;"
+                            :title="st.signal_detail">
+                            {{ st.signal_detail }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </el-card>
+
+        <!-- ===== 多维度评分卡片 ===== -->
+        <el-card shadow="hover"
+            style="margin-top:16px;border:1px solid #a78bfa;">
+            <template #header>
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div>
+                        <b>🧠 多维度策略评分</b>
+                        <el-tag size="small" type="success" style="margin-left:8px;">
+                            {{ scoreSummary.buy_count }}只建议买入
+                        </el-tag>
+                        <el-tag size="small" type="warning" style="margin-left:4px;">
+                            {{ scoreSummary.hold_count }}只观望
+                        </el-tag>
+                        <el-tag size="small" style="margin-left:4px;">
+                            均分{{ scoreSummary.avg_score }}
+                        </el-tag>
+                    </div>
+                    <div>
+                        <div v-if="scanProgress" style="font-size:12px;color:#909399;margin-bottom:4px;">{{ scanProgress }}</div>
+                        <el-button size="small" type="primary" plain @click="triggerScan"
+                            :loading="scanning" :disabled="scanning">
+                            {{ scanning ? '扫描中...' : '🔄 重新扫描' }}
+                        </el-button>
+                        <el-button size="small" plain @click="showScanLogs = !showScanLogs"
+                            style="margin-left:6px;">
+                            📋 日志
+                        </el-button>
+                    </div>
+                </div>
+            </template>
+            <!-- ── 扫描日志面板 ── -->
+            <div v-if="showScanLogs" style="margin-bottom:12px;border:1px solid #ebeef5;border-radius:6px;overflow:hidden;">
+                <div style="padding:8px 12px;background:#f9f9f9;font-size:13px;font-weight:bold;border-bottom:1px solid #ebeef5;">📋 扫描运行日志</div>
+                <div v-if="scanLogs.length === 0" style="padding:12px;text-align:center;color:#909399;font-size:12px;">
+                    暂无记录，<el-button size="small" link @click="loadScanLogs">点击加载</el-button>
+                </div>
+                <div v-for="log in scanLogs" :key="log.id"
+                    style="display:flex;align-items:center;padding:6px 12px;border-bottom:1px solid #f5f5f5;font-size:12px;">
+                    <div style="width:60px;">
+                        <el-tag size="small" :type="log.status === 'completed' ? 'success' : (log.status === 'running' ? 'warning' : 'danger')" effect="plain">
+                            {{ log.status === 'completed' ? '完成' : (log.status === 'running' ? '运行中' : '失败') }}
+                        </el-tag>
+                    </div>
+                    <div style="flex:1;color:#606266;">
+                        {{ log.message || (log.status === 'running' ? '扫描中...' : '') }}
+                    </div>
+                    <div style="width:80px;text-align:right;color:#909399;">
+                        {{ log.duration_seconds ? log.duration_seconds + 's' : '-' }}
+                    </div>
+                    <div style="width:150px;text-align:right;color:#909399;font-size:11px;">
+                        {{ log.started_at ? log.started_at.substring(11, 19) : '' }}
+                    </div>
+                </div>
+            </div>
+            <!-- ── 空态 ── -->
+            <div v-if="!stockScores.length" style="text-align:center;padding:32px 0;color:#909399;">
+                <div style="font-size:36px;margin-bottom:8px;">🧠</div>
+                <div style="margin-bottom:8px;">暂无评分数据</div>
+                <el-button size="small" type="primary" @click="triggerScan" :loading="scanning">
+                    {{ scanning ? '扫描中...' : '开始扫描' }}
+                </el-button>
+            </div>
+            <div v-for="s in stockScores" :key="s.stock_code"
+                style="border:1px solid #ebeef5;border-radius:6px;margin-bottom:8px;overflow:hidden;">
+                <div @click="toggleExpand(s.stock_code)"
+                    style="display:flex;align-items:center;padding:6px 12px;cursor:pointer;
+                           border-bottom:1px solid #f0f0f0;user-select:none;">
+                    <div style="width:110px;flex-shrink:0;">
+                        <router-link :to="'/analysis?code=' + s.stock_code"
+                            @click.stop style="color:#409eff;text-decoration:none;font-weight:bold;font-size:13px;">
+                            {{ s.stock_name || s.stock_code }}
+                        </router-link>
+                        <div style="font-size:10px;color:#909399;">{{ s.stock_code }}</div>
+                    </div>
+                    <div v-for="dim in dimOrder" :key="dim" style="flex:1;text-align:center;">
+                        <div style="font-size:9px;color:#909399;">{{ dimLabel[dim] }}</div>
+                        <div :style="{fontSize:'14px',fontWeight:'bold',color: scoreColor(s.scores?.[dim] || 0)}">
+                            {{ Math.round(s.scores?.[dim] || 0) }}
+                        </div>
+                    </div>
+                    <div style="width:60px;text-align:center;">
+                        <div style="font-size:9px;color:#909399;">综合</div>
+                        <div :style="{fontSize:'18px',fontWeight:'bold',color: scoreColor(s.final_score)}">
+                            {{ (s.final_score || 0).toFixed(1) }}
+                        </div>
+                    </div>
+                    <div style="width:70px;text-align:center;">
+                        <el-tag :type="decisionTag(s.decision)" size="small" effect="dark">
+                            {{ decisionLabel(s.decision) }}
+                        </el-tag>
+                    </div>
+                    <div style="width:18px;text-align:center;color:#909399;font-size:12px;">
+                        {{ expandedSet.has(s.stock_code) ? '▲' : '▼' }}
+                    </div>
+                </div>
+                <div v-if="expandedSet.has(s.stock_code)" style="padding:10px 16px;background:#fafafa;font-size:12px;">
+                    <div v-for="dim in dimOrder" :key="dim" style="margin-bottom:6px;">
+                        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
+                            <b style="width:55px;color:#606266;">{{ dimLabel[dim] }}</b>
+                            <el-progress :percentage="s.scores?.[dim] || 0" :stroke-width="6"
+                                :color="scoreColor(s.scores?.[dim] || 0)" style="flex:1;max-width:80px;" />
+                            <span :style="{color:scoreColor(s.scores?.[dim] || 0),fontWeight:'bold'}">
+                                {{ Math.round(s.scores?.[dim] || 0) }}
+                            </span>
+                        </div>
+                        <div v-for="ev in (evidenceList(s, dim))" :key="ev.factor"
+                            style="padding-left:60px;color:#606266;line-height:1.6;">
+                            <span style="color:#909399;">· {{ ev.factor }}:</span>
+                            <span>{{ ev.detail }}</span>
+                            <span :style="{color:scoreColor(ev.score),marginLeft:'4px',fontWeight:'bold'}">
+                                ({{ Math.round(ev.score) }})
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </el-card>
+
         <!-- 加载 / 无数据 -->
         <el-row v-if="loading" style="margin-top:40px;text-align:center;">
             <el-col><el-icon class="is-loading" :size="24"><Loading /></el-icon> 加载中...</el-col>
@@ -305,6 +523,7 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { getMarketOverview, getMarketDates, getSentimentCycle, getIndexHistory, getDailyNote, saveDailyNote, refreshMarketData, getMarketNarratives } from '../api/index.js'
+import axios from 'axios'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 
@@ -638,6 +857,12 @@ onMounted(async () => {
     await loadDailyNote()
     // 加载叙事分析
     await loadNarratives()
+    // 加载多维度评分
+    await fetchStockScores()
+    // 加载策略信号
+    await loadSignals()
+    // 加载构建版本
+    await loadBuildVersion()
 })
 
 // 日期切换时重新加载笔记
@@ -684,6 +909,194 @@ watch(editingNote, async (v) => {
         catch { /* ignore */ }
     }
 })
+
+// ===== 策略信号 =====
+const signalStrategies = ref([])
+const strategyScanning = ref(false)
+const dimensionWeights = ref({})
+const loadingSignals = ref(false)
+const showSignalConfig = ref(false)
+const signalExpandedSet = ref(new Set())
+const buildVersion = ref({})
+
+async function loadBuildVersion() {
+    try {
+        const { data } = await axios.get('/api/build-version')
+        buildVersion.value = data
+    } catch { /* 开发环境忽略 */ }
+}
+
+const signalSummary = computed(() => {
+    const total = signalStrategies.value.length
+    const triggered = signalStrategies.value.reduce((s, stg) => s + stg.triggered_count, 0)
+    return { total, triggered }
+})
+
+function signalDimColor(dim) {
+    const m = { technical: 'danger', fundamental: 'success', narrative: 'warning', capital_flow: '', sentiment: 'info' }
+    return m[dim] || 'info'
+}
+
+function toggleSignalExpand(id) {
+    const s = new Set(signalExpandedSet.value)
+    if (s.has(id)) s.delete(id); else s.add(id)
+    signalExpandedSet.value = s
+}
+
+async function loadSignals() {
+    loadingSignals.value = true
+    try {
+        const { data } = await api.get("/strategy-evol/signals")
+        signalStrategies.value = data.strategies || []
+    } catch (e) {
+        console.error("加载信号失败", e)
+    } finally {
+        loadingSignals.value = false
+    }
+}
+
+async function updateWeight(dim, val) {
+    try {
+        await api.put("/strategy-evol/weights", { dimension: dim, weight: val })
+    } catch (e) {
+        console.error("更新权重失败", e)
+    }
+}
+
+async function triggerStrategyScan() {
+    if (strategyScanning.value) return
+    strategyScanning.value = true
+    try {
+        const { data } = await api.get("/strategy-evol/strategy-scan", {
+            params: { session: "close", max_stocks: 200 }
+        })
+        if (data.total_signals !== undefined) {
+            // 扫描完成，刷新信号
+            await loadSignals()
+        }
+    } catch (e) {
+        console.error("策略扫描失败", e)
+    } finally {
+        strategyScanning.value = false
+    }
+}
+
+// ===== 多维度评分 =====
+const stockScores = ref([])
+const scoring = ref(false)
+const scanning = ref(false)
+const scanProgress = ref("")
+const showScanLogs = ref(false)
+const scanLogs = ref([])
+const dimOrder = ["technical", "fundamental", "narrative", "capital_flow", "sentiment"]
+const dimLabel = {
+    technical: "技术", fundamental: "基本",
+    narrative: "叙事", capital_flow: "资金", sentiment: "情绪",
+}
+const expandedSet = ref(new Set())
+
+function toggleExpand(code) {
+    const s = new Set(expandedSet.value)
+    if (s.has(code)) s.delete(code); else s.add(code)
+    expandedSet.value = s
+}
+
+function scoreColor(s) {
+    if (s >= 70) return "#67c23a"
+    if (s >= 50) return "#e6a23c"
+    return "#909399"
+}
+
+function decisionTag(d) {
+    if (d === "STRONG_BUY" || d === "BUY") return "success"
+    if (d === "HOLD") return "warning"
+    return "info"
+}
+
+function decisionLabel(d) {
+    if (d === "STRONG_BUY") return "强烈买入"
+    if (d === "BUY") return "买入"
+    if (d === "HOLD") return "观望"
+    return "不进"
+}
+
+function evidenceList(s, dim) {
+    try {
+        const ev = typeof s.evidence === "string" ? JSON.parse(s.evidence) : (s.evidence || {})
+        return ev[dim] || []
+    } catch { return [] }
+}
+
+const scoreSummary = computed(() => {
+    const list = stockScores.value
+    let buy = 0, hold = 0, total = 0, avg = 0
+    for (const s of list) {
+        total++
+        avg += s.final_score || 0
+        if (s.decision === "BUY" || s.decision === "STRONG_BUY") buy++
+        else if (s.decision === "HOLD") hold++
+    }
+    return {
+        total, buy_count: buy, hold_count: hold,
+        avg_score: total ? (avg / total).toFixed(1) : "0",
+    }
+})
+
+async function fetchStockScores() {
+    // 先尝试加载已有的最新结果
+    try {
+        const { data } = await api.get("/strategy-evol/results/latest")
+        if (data.results && data.results.length) {
+            stockScores.value = data.results.slice(0, 30)
+            return
+        }
+    } catch { /* 没有结果，触发一次扫描 */ }
+    // 没有已有结果，触发异步扫描
+    await triggerScan()
+}
+
+// 页面加载时顺带加载扫描日志（不阻塞）
+loadScanLogs()
+
+async function triggerScan() {
+    if (scanning.value) return
+    scanning.value = true
+    scanProgress.value = "发起扫描..."
+    try {
+        const { data } = await api.get("/strategy-evol/scan?session=close&max_stocks=20")
+        const batchId = data.batch_id
+        // 轮询进度
+        let tries = 0
+        while (tries < 60) {  // 最多等5分钟
+            await new Promise(r => setTimeout(r, 5000))
+            const { data: st } = await api.get("/strategy-evol/scan/status")
+            const p = st.progress || {}
+            scanProgress.value = `扫描中 ${p.scored || 0}/${p.total || "?"} 只 (失败${p.failures || 0})`
+            if (!st.running) break
+            tries++
+        }
+        // 扫描完成，加载结果
+        const { data: res } = await api.get("/strategy-evol/results/latest")
+        stockScores.value = (res.results || []).slice(0, 30)
+        scanProgress.value = ""
+    } catch (e) {
+        console.error("扫描失败", e)
+        scanProgress.value = "扫描失败"
+    } finally {
+        scanning.value = false
+        scoring.value = false
+        // 展开日志面板并加载日志
+        showScanLogs.value = true
+        await loadScanLogs()
+    }
+}
+
+async function loadScanLogs() {
+    try {
+        const { data } = await api.get("/strategy-evol/scan/logs?limit=10")
+        scanLogs.value = data.logs || []
+    } catch { /* ignore */ }
+}
 </script>
 
 <style scoped>

@@ -55,6 +55,28 @@ def save_scan_signals(scan_result: dict, top_signals: list[dict] = None):
     conn = sqlite3.connect(DB)
     signals = top_signals if top_signals is not None else scan_result.get('top_signals', [])
     if not signals:
+        # 即使0信号也写入一条meta记录，确保当天能显示扫描记录
+        meta = {
+            'scan_date': scan_result.get('date', ''),
+            'scan_type': scan_result.get('scan_type', ''),
+            'index_code': scan_result.get('index', ''),
+            'index_name': scan_result.get('index_name', ''),
+            'market_summary': scan_result.get('summary', ''),
+            'total_scanned': scan_result.get('total_scanned', 0),
+            'signal_count': 0,
+            'generated_at': scan_result.get('generated_at', datetime.now().strftime('%Y-%m-%d %H:%M')),
+        }
+        conn.execute('''
+            INSERT INTO ai_scan_records
+                (scan_date, scan_type, index_code, index_name,
+                 code, name, score,
+                 market_summary, total_scanned, signal_count, generated_at)
+            VALUES (?, ?, ?, ?, '', '', 0, ?, ?, 0, ?)
+        ''', (
+            meta['scan_date'], meta['scan_type'], meta['index_code'], meta['index_name'],
+            meta['market_summary'], meta['total_scanned'], meta['generated_at'],
+        ))
+        conn.commit()
         conn.close()
         return
 
@@ -106,6 +128,9 @@ def _rows_to_scan_result(rows: list[sqlite3.Row]) -> Optional[dict]:
     signals = []
     for r in rows:
         d = dict(r)
+        # 跳过meta记录(无实际股票代码)
+        if not d['code']:
+            continue
         signals.append({
             'code': d['code'],
             'name': d['name'],
@@ -121,8 +146,8 @@ def _rows_to_scan_result(rows: list[sqlite3.Row]) -> Optional[dict]:
             'stop_loss': d['stop_loss'],
             'take_profit': d['take_profit'],
             'position': d['position'],
-            'technical_signals': json.loads(d.get('technical_signals', '[]')),
-            'risk_factors': json.loads(d.get('risk_factors', '[]')),
+            'technical_signals': json.loads(d.get('technical_signals') or '[]'),
+            'risk_factors': json.loads(d.get('risk_factors') or '[]'),
         })
 
     return {
@@ -238,13 +263,15 @@ def get_today_scan_summary() -> list[dict]:
     target_date = latest['d'] if latest and latest['d'] else today_str
     rows = conn.execute('''
         SELECT scan_type, index_code, index_name,
-               COUNT(*) as signal_count, total_scanned, generated_at,
+               MAX(signal_count) as signal_count,
+               MAX(total_scanned) as total_scanned,
+               MAX(generated_at) as generated_at,
                ROUND(AVG(score),1) as avg_score,
                ROUND(MAX(score),1) as max_score
         FROM ai_scan_records
         WHERE scan_date = ?
         GROUP BY scan_type, index_code
-        ORDER BY index_code, scan_type
+        ORDER BY CASE scan_type WHEN 'noon' THEN 0 ELSE 1 END, index_code
     ''', (target_date,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]

@@ -71,6 +71,23 @@
                             <span>🧪 每日训练</span>
                         </el-menu-item>
                     </el-sub-menu>
+                    <el-sub-menu index="strategy-group">
+                        <template #title>
+                            <span>📐 策略研究</span>
+                        </template>
+                        <el-menu-item index="/strategy-research">
+                            <span>📋 策略管理</span>
+                        </el-menu-item>
+                        <el-menu-item index="/strategy-create">
+                            <span>✨ 策略创建</span>
+                        </el-menu-item>
+                        <el-menu-item index="/strategy-backtest">
+                            <span>📈 策略回测</span>
+                        </el-menu-item>
+                        <el-menu-item index="/strategy-config">
+                            <span>⚙️ 策略配置</span>
+                        </el-menu-item>
+                    </el-sub-menu>
                 </el-sub-menu>
 
                 <div class="menu-divider" />
@@ -83,9 +100,6 @@
                     </template>
                     <el-menu-item index="/watchlist">
                         <span>👁️ 观察池</span>
-                    </el-menu-item>
-                    <el-menu-item index="/strategy-backtest">
-                        <span>📐 策略回测</span>
                     </el-menu-item>
                     <el-menu-item index="/trading-plans">
                         <span>📝 交易计划</span>

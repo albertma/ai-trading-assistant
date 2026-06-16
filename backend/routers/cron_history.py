@@ -51,6 +51,18 @@ CRON_TASKS = [
         "schedule": "20:35",
     },
     {
+        "name": "收盘策略扫描",
+        "description": "收盘后基于策略配置（沪深300+中证500+观察池）全量扫描信号",
+        "icon": "🔍",
+        "schedule": "16:00",
+    },
+    {
+        "name": "午盘策略扫描",
+        "description": "午盘基于策略配置（沪深300+中证500+观察池）扫描盘中信号",
+        "icon": "🔍",
+        "schedule": "11:30",
+    },
+    {
         "name": "手动计算板块分析",
         "description": "手动触发指定日期的板块分析全流程（刷新数据+计算周期+AI摘要）",
         "icon": "🧮",
@@ -318,6 +330,39 @@ def run_cron_job(job_name: str):
             msg = " | ".join(steps) + " ✅"
             update_cron_log(log_id, "success", msg)
             result.update({"status": "success", "message": msg})
+
+        elif job_name == "收盘策略扫描":
+            try:
+                from backend.services.strategy_scan import run_strategy_scan
+                scan_result = run_strategy_scan(session="close")
+                total = scan_result.get("total_signals", 0)
+                strategies = scan_result.get("total_strategies", 0)
+                scanned = scan_result.get("total_stocks_scanned", 0)
+                dur = scan_result.get("duration", 0)
+                msg = f"扫描{strategies}策略×{scanned}只股票 → 发现{total}个信号（耗时{dur}秒）"
+                if total > 0:
+                    by_strat = scan_result.get("signals_by_strategy", {})
+                    tops = [f"{k}({v['triggered']})" for k, v in sorted(by_strat.items(), key=lambda x: -x[1]['triggered'])[:5]]
+                    msg += f" | TOP: {' '.join(tops)}"
+                update_cron_log(log_id, "success", msg)
+                result.update({"status": "success", "message": msg})
+            except Exception as e:
+                err = f"收盘策略扫描失败: {e}"
+                update_cron_log(log_id, "failed", err)
+                result.update({"status": "failed", "message": err})
+
+        elif job_name == "午盘策略扫描":
+            try:
+                from backend.services.strategy_scan import run_strategy_scan
+                scan_result = run_strategy_scan(session="noon")
+                total = scan_result.get("total_signals", 0)
+                msg = f"午盘扫描完成 → 发现{total}个信号（{scan_result.get('duration',0)}秒）"
+                update_cron_log(log_id, "success", msg)
+                result.update({"status": "success", "message": msg})
+            except Exception as e:
+                err = f"午盘策略扫描失败: {e}"
+                update_cron_log(log_id, "failed", err)
+                result.update({"status": "failed", "message": err})
 
         elif job_name == "思维模型反思":
             from backend.routers.mental_models import auto_reflect_all

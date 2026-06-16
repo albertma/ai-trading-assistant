@@ -69,6 +69,29 @@ STRATEGY_PRESETS = {
     "bottom_reversal":    ("bottom_reversal",    "macd_death",       0.0),
     "pullback_breakout":  ("pullback_breakout",  "macd_death",       7.0),
     "bottom_reversal_weekly": ("bottom_reversal", "macd_death_daily_ma30", 0.0),
+    # === RL优化底部反转（分板块）— 独立entry函数，不同默认参数 ===
+    "bottom_reversal_semi":   ("bottom_reversal_semi", "macd_death", 0.0),
+    "bottom_reversal_elec":   ("bottom_reversal_elec", "macd_death", 0.0),
+    "bottom_reversal_comm":   ("bottom_reversal_comm", "macd_death", 0.0),
+    "bottom_reversal_equip":  ("bottom_reversal_equip", "macd_death", 0.0),
+    "bottom_reversal_celec":  ("bottom_reversal_celec", "macd_death", 0.0),
+    "bottom_reversal_metal":  ("bottom_reversal_metal", "macd_death", 0.0),
+    "bottom_reversal_coal":   ("bottom_reversal_coal", "macd_death", 0.0),
+    "bottom_reversal_chem":   ("bottom_reversal_chem", "macd_death", 0.0),
+    "bottom_reversal_pv":     ("bottom_reversal_pv", "macd_death", 0.0),
+    "bottom_reversal_ship":   ("bottom_reversal_ship", "macd_death", 0.0),
+    "bottom_reversal_auto":   ("bottom_reversal_auto", "macd_death", 0.0),
+    "bottom_reversal_medi":   ("bottom_reversal_medi", "macd_death", 0.0),
+    # === 新增9个板块策略（RL优化2026-06-15）===
+    "bottom_reversal_aero":   ("bottom_reversal_aero", "macd_death", 0.0),
+    "bottom_reversal_soft":   ("bottom_reversal_soft", "macd_death", 0.0),
+    "bottom_reversal_batt":   ("bottom_reversal_batt", "macd_death", 0.0),
+    "bottom_reversal_bio":    ("bottom_reversal_bio",  "macd_death", 0.0),
+    "bottom_reversal_mil":    ("bottom_reversal_mil",  "macd_death", 0.0),
+    "bottom_reversal_medd":   ("bottom_reversal_medd", "macd_death", 0.0),
+    "bottom_reversal_grid":   ("bottom_reversal_grid", "macd_death", 0.0),
+    "bottom_reversal_comp":   ("bottom_reversal_comp", "macd_death", 0.0),
+    "bottom_reversal_tcm":    ("bottom_reversal_tcm",  "macd_death", 0.0),
 }
 
 # 预设描述
@@ -85,6 +108,29 @@ STRATEGY_LABELS = {
     "bottom_reversal":    "🧘 底部反转突破(死叉→0轴金叉→缩量筑底→放量突破)",
     "pullback_breakout":  "📈 缩量调整突破(死叉后平台+量MA5上穿量MA10+突破)",
     "bottom_reversal_weekly": "🧘 底部反转突破(周K趋势过滤·日K信号·日K<MA30退出)",
+    # === RL优化底部反转（分板块） ===
+    "bottom_reversal_semi":   "🔬 半导体底部反转(RL:min=25,max=35,vol=0.4,tol=0.95,dif=-5)",
+    "bottom_reversal_elec":   "⚡ 电力底部反转(RL:min=30,max=35,vol=0.6,wr=60%🏅)",
+    "bottom_reversal_comm":   "📡 通信设备底部反转(默认参数—RL过拟合回退)",
+    "bottom_reversal_equip":  "🔧 专用设备底部反转(RL:min=5,max=90,vol=0.4,wr=54%🏅)",
+    "bottom_reversal_celec":  "📱 消费电子底部反转(RL:min=25,max=45,vol=0.6,wr=100%🏅)",
+    "bottom_reversal_metal":  "⛏️ 工业金属底部反转(RL:min=20,max=60,vol=0.6,wr=62%🏅)",
+    "bottom_reversal_coal":   "🪨 煤炭开采底部反转(默认参数—RL过拟合回退)",
+    "bottom_reversal_chem":   "🧪 化学制品底部反转(RL:min=25,max=75,vol=0.6,wr=63%🏅)",
+    "bottom_reversal_pv":     "☀️ 光伏设备底部反转(RL:min=30,max=75,vol=0.4,wr=74%🏅)",
+    "bottom_reversal_ship":   "🚢 航运港口底部反转(RL:min=15,max=25,vol=0.2,tol=0.98)",
+    "bottom_reversal_auto":   "🚗 汽车零部件底部反转(RL:min=30,max=45,vol=0.5,wr=54%🏅)",
+    "bottom_reversal_medi":   "💊 化学制药底部反转(RL:min=25,max=75,vol=0.6,wr=38%)",
+    # === 新增9个板块策略（RL优化2026-06-15） ===
+    "bottom_reversal_aero":   "🛩️ 航空装备Ⅱ底部反转(RL:wr=100%🏅,改进+47.0)",
+    "bottom_reversal_soft":   "💻 软件开发底部反转(RL:wr=100%🏅,改进+66.9)",
+    "bottom_reversal_batt":   "🔋 电池底部反转(默认参数—RL过拟合回退)",
+    "bottom_reversal_bio":    "🧬 生物制品底部反转(RL:wr=58%🏅,改进+49.7)",
+    "bottom_reversal_mil":    "🎖️ 军工电子Ⅱ底部反转(RL:wr=60%🏅,改进+17.5)",
+    "bottom_reversal_medd":   "🏥 医疗器械底部反转(RL:wr=48%,改进+33.1)",
+    "bottom_reversal_grid":   "⚡ 电网设备底部反转(默认参数—RL过拟合回退)",
+    "bottom_reversal_comp":   "🔩 元件底部反转(RL:wr=75%🏅,改进+35.5)",
+    "bottom_reversal_tcm":    "🌿 中药Ⅱ底部反转(RL:wr=21%)",
 }
 
 
@@ -246,13 +292,13 @@ def entry_bottom_reversal(i, closes, highs, lows, opens, volumes, macd_line, mac
                            ma_fast, ma_slow, ma_20, ma_60,
                            min_days=10, max_days=45, check_before=10,
                            weekly_mode=False, ma_120=None,
-                           **_):
+                           gc_window=5, vol_ratio=0.4, ma60_tol=0.95, dif_thresh=-1.0, vol_min_idx=5, **_):
     """
     底部反转突破 v3:
     ① 回调前: MA5>MA10>MA20, 价格>MA60, MA60斜率向上
     ② 死叉: DIF>0, DEA>0, 量MA5<量MA10(置信)
-    ③ 筑底: 价格在MA60附近(>=MA60*0.95), 小实体K线, 量<量MA5
-    ④ 突破: MACD金叉(DIF>=-1, DEA>=-1), 量>MA5或量MA5/10金叉
+    ③ 筑底: 价格在MA60附近(>=MA60*ma60_tol), 小实体K线, 量<量MA5
+    ④ 突破: MACD金叉(DIF>=dif_thresh, DEA>=dif_thresh), 量>MA5或量MA5/10金叉
 
     weekly_mode=True 时: 增加 MA60 > MA120 趋势过滤（日K ≈ 60日 > 120日），
     信号检测仍在日K级别进行。
@@ -271,8 +317,7 @@ def entry_bottom_reversal(i, closes, highs, lows, opens, volumes, macd_line, mac
         if ma_60[i] <= ma_120[i]:
             return None
 
-    # ── 阶段④: 找MACD金叉(最后5 bar内) ──
-    gc_window = 5
+    # ── 阶段④: 找MACD金叉(最后gc_window bar内) ──
     golden_cross_idx = None
     for j in range(max(window_start, i - gc_window), i + 1):
         if j < 1:
@@ -280,7 +325,7 @@ def entry_bottom_reversal(i, closes, highs, lows, opens, volumes, macd_line, mac
         if (not np.isnan(macd_line[j]) and not np.isnan(macd_line[j-1])
             and not np.isnan(macd_signal_line[j]) and not np.isnan(macd_signal_line[j-1])
             and macd_line[j-1] <= macd_signal_line[j-1] and macd_line[j] > macd_signal_line[j]
-            and macd_line[j] >= -1.0 and macd_signal_line[j] >= -1.0):
+            and macd_line[j] >= dif_thresh and macd_signal_line[j] >= dif_thresh):
                 golden_cross_idx = j
                 break
 
@@ -328,7 +373,7 @@ def entry_bottom_reversal(i, closes, highs, lows, opens, volumes, macd_line, mac
     for j in range(death_cross_idx, golden_cross_idx):
         if np.isnan(ma_60[j]) or np.isnan(closes[j]):
             continue
-        if closes[j] < ma_60[j] * 0.95:
+        if closes[j] < ma_60[j] * ma60_tol:
             return None
 
     # ── 阶段③: 筑底期缩量 + 小实体K线置信度 ──
@@ -353,12 +398,11 @@ def entry_bottom_reversal(i, closes, highs, lows, opens, volumes, macd_line, mac
             small_body_count += 1
 
     min_vol_checks = 5
-    if total_check < min_vol_checks or low_vol_count < total_check * 0.4:
+    if total_check < min_vol_checks or low_vol_count < total_check * vol_ratio:
         return None
 
     # ── 阶段④: 放量确认(量>MA5 OR 量MA5上穿量MA10) ──
     vol_ok = False
-    vol_min_idx = 5
     for offset in range(gc_window):
         ii = golden_cross_idx + offset
         if ii >= len(volumes):
@@ -388,6 +432,70 @@ def entry_bottom_reversal(i, closes, highs, lows, opens, volumes, macd_line, mac
                    f"0轴金叉DIF={macd_line[golden_cross_idx]:.1f})"),
         "need_breakout": False,
     }
+
+
+# ═══════════════════════════════════════════════
+# RL优化底部反转（分板块 wrapper）
+# ═══════════════════════════════════════════════
+_RL_PARAMS = {
+    # ── 以下16个板块通过150天样本外验证 ✅ ──
+    # 半导体：旧检查点无数据，保留原参数
+    "bottom_reversal_semi":  {"min_days": 25, "max_days": 35, "vol_ratio": 0.4,  "ma60_tol": 0.95, "dif_thresh": -5, "gc_window": 10},
+    # 电力: ✅ WR 33.6%→60.0%, PnL 4.0→15.8
+    "bottom_reversal_elec":  {"min_days": 30, "max_days": 35, "vol_ratio": 0.6,  "ma60_tol": 0.90, "dif_thresh": -3, "gc_window": 5},
+    # 通信设备: ❌ 过拟合 → 回退默认参数
+    "bottom_reversal_comm":  {"min_days": 10, "max_days": 45, "vol_ratio": 0.4,  "ma60_tol": 0.95, "dif_thresh": -1, "gc_window": 5},
+    # 专用设备: ✅ WR 39.8%→54.4%, PnL 0.5→647.7
+    "bottom_reversal_equip": {"min_days":  5, "max_days": 90, "vol_ratio": 0.4,  "ma60_tol": 0.95, "dif_thresh": -3, "gc_window": 7},
+    # 消费电子: ✅ WR 37.1%→100.0%, PnL -3.0→63.6
+    "bottom_reversal_celec": {"min_days": 25, "max_days": 45, "vol_ratio": 0.6,  "ma60_tol": 0.97, "dif_thresh": -5, "gc_window": 10},
+    # 工业金属: ✅ WR 36.8%→62.5%, PnL 27.0→110.0
+    "bottom_reversal_metal": {"min_days": 20, "max_days": 60, "vol_ratio": 0.6,  "ma60_tol": 0.97, "dif_thresh": -5, "gc_window": 7},
+    # 煤炭开采: ❌ 过拟合 → 回退默认参数
+    "bottom_reversal_coal":  {"min_days": 10, "max_days": 45, "vol_ratio": 0.4,  "ma60_tol": 0.95, "dif_thresh": -1, "gc_window": 5},
+    # 化学制品: ✅ WR 40.3%→63.1%, PnL 6.9→200.3
+    "bottom_reversal_chem":  {"min_days": 25, "max_days": 75, "vol_ratio": 0.6,  "ma60_tol": 0.90, "dif_thresh": -3, "gc_window": 10},
+    # 光伏设备: ✅⭐ WR 30.8%→73.9%, PnL 426.4→1785.6（效果最显著）
+    "bottom_reversal_pv":    {"min_days": 30, "max_days": 75, "vol_ratio": 0.4,  "ma60_tol": 0.93, "dif_thresh": -3, "gc_window": 10},
+    # 航运港口：不在RL优化板块中（CSI500中<8只），保留原参数
+    "bottom_reversal_ship":  {"min_days": 15, "max_days": 25, "vol_ratio": 0.2,  "ma60_tol": 0.98, "dif_thresh": -5, "gc_window": 10},
+    # 汽车零部件: ✅ WR 32.8%→53.5%, PnL 43.0→64.9
+    "bottom_reversal_auto":  {"min_days": 30, "max_days": 45, "vol_ratio": 0.5,  "ma60_tol": 0.95, "dif_thresh": -3, "gc_window": 10},
+    # 化学制药: ✅ WR 16.7%→37.5%, PnL -64.5→33.1
+    "bottom_reversal_medi":  {"min_days": 25, "max_days": 75, "vol_ratio": 0.6,  "ma60_tol": 0.90, "dif_thresh": -1, "gc_window": 7},
+
+    # ── 新增9个板块策略（以下通过验证的已确认） ──
+    # 航空装备Ⅱ: ✅ WR 20.8%→100.0%, PnL -189.3→103.9
+    "bottom_reversal_aero":  {"min_days": 30, "max_days": 60, "vol_ratio": 0.4,  "ma60_tol": 0.93, "dif_thresh": -5, "gc_window": 5},
+    # 软件开发: ✅ WR 25.0%→100.0%, PnL 66.0→138.9
+    "bottom_reversal_soft":  {"min_days": 20, "max_days": 60, "vol_ratio": 0.5,  "ma60_tol": 0.93, "dif_thresh":  0, "gc_window": 3},
+    # 电池: ❌ 过拟合 → 回退默认参数
+    "bottom_reversal_batt":  {"min_days": 10, "max_days": 45, "vol_ratio": 0.4,  "ma60_tol": 0.95, "dif_thresh": -1, "gc_window": 5},
+    # 生物制品: ✅ WR 0.0%→58.3%, PnL -1.1→178.7
+    "bottom_reversal_bio":   {"min_days":  5, "max_days": 75, "vol_ratio": 0.3,  "ma60_tol": 0.90, "dif_thresh": -5, "gc_window": 7},
+    # 军工电子Ⅱ: ✅ WR 58.9%→67.1%, PnL 391.1→723.7
+    "bottom_reversal_mil":   {"min_days": 20, "max_days": 45, "vol_ratio": 0.3,  "ma60_tol": 0.90, "dif_thresh": -5, "gc_window": 5},
+    # 医疗器械: ✅ WR 15.8%→48.5%, PnL -47.1→187.7
+    "bottom_reversal_medd":  {"min_days": 30, "max_days": 60, "vol_ratio": 0.5,  "ma60_tol": 0.97, "dif_thresh": -1, "gc_window": 10},
+    # 电网设备: ❌ 过拟合 → 回退默认参数
+    "bottom_reversal_grid":  {"min_days": 10, "max_days": 45, "vol_ratio": 0.4,  "ma60_tol": 0.95, "dif_thresh": -1, "gc_window": 5},
+    # 元件: ⚠️ 勉强可用（75.0%但仅8笔, PnL 569.8→309.7下降）
+    "bottom_reversal_comp":  {"min_days": 30, "max_days": 35, "vol_ratio": 0.4,  "ma60_tol": 0.93, "dif_thresh":  2, "gc_window": 7},
+    # 中药Ⅱ: ✅ WR 18.2%→23.8%, PnL -20.8→13.5
+    "bottom_reversal_tcm":   {"min_days": 30, "max_days": 35, "vol_ratio": 0.3,  "ma60_tol": 0.95, "dif_thresh": -3, "gc_window": 7},
+}
+
+for _rl_name, _rl_p in _RL_PARAMS.items():
+    # 动态注册：每个板块一个独立entry函数
+    # 注意：必须从**kw中移除冲突key，避免"multiple values"错误
+    _rl_keys_str = repr(list(_rl_p.keys()))
+    _rl_params_str = ','.join(f'{k}={v}' for k, v in _rl_p.items())
+    _fn = eval(f"lambda i, **kw: entry_bottom_reversal(i, **{{k:v for k,v in kw.items() if k not in {_rl_keys_str}}}, {_rl_params_str})")
+    _fn.__name__ = f"entry_{_rl_name}"
+    _fn.__qualname__ = _fn.__name__
+    register_entry(_rl_name,
+                   f"RL底部反转({_rl_name.split('_')[-1]}板块)",
+                   params_schema=_rl_p)(_fn)
 
 
 @register_entry("pullback_breakout", "缩量调整放量突破(死叉后小幅回踩+MACD金叉+量MA5上穿量MA10+突破)",

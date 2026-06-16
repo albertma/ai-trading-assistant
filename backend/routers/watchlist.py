@@ -165,13 +165,54 @@ def refresh_one_kline(code: str):
 
 @router.get("/local-kline/{code}")
 def local_kline(code: str, days: int = 400):
-    """从本地数据库获取K线数据，如果没有则实时抓取"""
+    """从本地数据库获取K线数据，如果没有则实时抓取，并补充今日实时价格"""
     from backend.services.db_client import get_kline_records, fetch_and_save_kline
+    from pathlib import Path
+    from datetime import date, timedelta
     records = get_kline_records(code, limit=days)
     if len(records) < 20:
         # 数据不足，实时抓取
         fetch_and_save_kline(code)
         records = get_kline_records(code, limit=days)
+    else:
+        # 检查最新记录是否过旧（超过3个交易日），是则重新抓取
+        latest_date = records[0].get('date', '') if records else ''
+        today_str = date.today().isoformat()
+        if latest_date and latest_date < (date.today() - timedelta(days=7)).isoformat():
+            fetch_and_save_kline(code)
+            records = get_kline_records(code, limit=days)
+
+    # 尝试补充今日实时价格（午盘/收盘CSV）
+    today_str = date.today().isoformat()
+    has_today = any(r.get('date') == today_str for r in records)
+    if not has_today:
+        csv_dir = Path.home() / "Jarvis" / "A股行情信息"
+        for suffix in [f"_noon", ""]:
+            csv_path = csv_dir / f"沪深京A股{today_str}{suffix}.csv"
+            if csv_path.exists():
+                try:
+                    import csv as csv_mod
+                    with open(str(csv_path), 'r', encoding='utf-16') as f:
+                        reader = csv_mod.DictReader(f, delimiter='\t')
+                        target = code.strip()
+                        for row in reader:
+                            row_code = row.get('代码', '').strip().lstrip("'")
+                            if row_code == target:
+                                today_row = {
+                                    'code': code,
+                                    'date': today_str,
+                                    'open': float(row['开盘'] or 0),
+                                    'close': float(row['最新'] or 0),
+                                    'high': float(row['最高'] or 0),
+                                    'low': float(row['最低'] or 0),
+                                    'volume': float(row.get('成交量', 0) or 0),
+                                }
+                                records.append(today_row)
+                                break
+                except Exception:
+                    pass
+                break
+
     # 按日期正序排列（前端图表需要）
     records.sort(key=lambda r: r["date"])
     return {"code": code, "records": records, "count": len(records)}

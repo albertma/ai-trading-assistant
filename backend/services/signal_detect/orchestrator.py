@@ -23,6 +23,7 @@ from .scorer import build_score
 from .ai_analyzer import enhance_with_ai
 
 DB = str(Path.home() / 'Jarvis' / 'ai_trading' / 'stock_archive.db')
+KLINE_DB = str(Path.home() / 'Jarvis' / 'ai_trading' / 'kline_data.db')
 HS300_DIR = str(Path.home() / 'Jarvis' / 'A股行情信息')
 REPORT_DIR = str(Path.home() / 'Jarvis' / 'AI研报')
 
@@ -40,7 +41,13 @@ INDEX_DISPLAY = {
 
 
 def _get_conn():
-    return sqlite3.connect(DB)
+    conn = sqlite3.connect(DB)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute(f"ATTACH DATABASE '{KLINE_DB}' AS kline")
+    except Exception:
+        pass
+    return conn
 
 
 def load_hs300_codes() -> list[tuple[str, str]]:

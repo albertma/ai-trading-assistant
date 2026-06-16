@@ -6,6 +6,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 DB_PATH = Path.home() / "Jarvis" / "ai_trading" / "stock_archive.db"
+KLINE_DB_PATH = Path.home() / "Jarvis" / "ai_trading" / "kline_data.db"
 
 def get_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -13,6 +14,31 @@ def get_db():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
+
+def get_kline_db():
+    """获取K线专用数据库连接（独立文件，减少IO竞争）"""
+    KLINE_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(KLINE_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+def init_kline_db():
+    """初始化K线数据库（创建kline_daily表）"""
+    conn = get_kline_db()
+    conn.execute("""CREATE TABLE IF NOT EXISTS kline_daily (
+        code TEXT NOT NULL,
+        date TEXT NOT NULL,
+        open REAL,
+        close REAL,
+        high REAL,
+        low REAL,
+        volume REAL,
+        PRIMARY KEY (code, date)
+    )""")
+    conn.commit()
+    conn.close()
 
 def init_db():
     conn = get_db()
@@ -129,16 +155,6 @@ def init_db():
             last_analysis_date TEXT,
             notes TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now', 'localtime'))
-        );
-        CREATE TABLE IF NOT EXISTS kline_daily (
-            code TEXT NOT NULL,
-            date TEXT NOT NULL,
-            open REAL,
-            close REAL,
-            high REAL,
-            low REAL,
-            volume REAL,
-            PRIMARY KEY (code, date)
         );
         CREATE TABLE IF NOT EXISTS chat_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -713,7 +729,7 @@ KLINE_MAX_DAYS = 400  # 最大保留400条
 
 def save_kline_records(code: str, records: list[dict]) -> int:
     """批量写入K线记录，自动去重"""
-    conn = get_db()
+    conn = get_kline_db()
     saved = 0
     for r in records:
         try:
@@ -733,7 +749,7 @@ def save_kline_records(code: str, records: list[dict]) -> int:
 
 def get_kline_records(code: str, limit: int = KLINE_MAX_DAYS) -> list[dict]:
     """获取K线记录（按日期倒序）"""
-    conn = get_db()
+    conn = get_kline_db()
     rows = conn.execute(
         "SELECT * FROM kline_daily WHERE code = ? ORDER BY date DESC LIMIT ?",
         (code, limit)
@@ -744,7 +760,7 @@ def get_kline_records(code: str, limit: int = KLINE_MAX_DAYS) -> list[dict]:
 
 def prune_kline(code: str = None, max_days: int = KLINE_MAX_DAYS) -> int:
     """删除超出的旧K线记录，返回删除条数"""
-    conn = get_db()
+    conn = get_kline_db()
     if code:
         sub = conn.execute(
             "SELECT date FROM kline_daily WHERE code = ? ORDER BY date DESC LIMIT 1 OFFSET ?",
@@ -869,6 +885,7 @@ def fetch_and_save_kline(code: str, days: int = 400) -> tuple[bool, int]:
 
 # 启动时初始化
 init_db()
+init_kline_db()
 
 
 # ===== 聊天记录 =====
@@ -939,9 +956,9 @@ def save_financial_reports(code: str, records: list[dict]) -> int:
                 code,
                 r.get("报告期", ""),
                 r.get("营业总收入") or r.get("revenue"),
-                r.get("营业总收入同比增长") or r.get("revenue_yoy"),
+                r.get("营业总收入同比增长") or r.get("营业总收入同比增长率") or r.get("revenue_yoy"),
                 r.get("净利润") or r.get("net_profit"),
-                r.get("净利润同比增长") or r.get("net_profit_yoy"),
+                r.get("净利润同比增长") or r.get("净利润同比增长率") or r.get("net_profit_yoy"),
                 r.get("销售毛利率") or r.get("gross_margin"),
                 r.get("销售净利率"),
                 r.get("每股收益") or r.get("eps"),

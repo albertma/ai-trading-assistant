@@ -12,7 +12,8 @@ from .models import TechnicalSignal, FundamentalSignal, NewsSignal, RiskFactor
 from backend.utils.indicators import macd as calc_macd, rsi as calc_rsi
 
 # 数据库路径
-DB = str(Path.home() / 'Jarvis' / 'ai_trading' / 'stock_archive.db')
+DB = str(Path.home() / 'Jarvis' / 'ai_trading' / 'kline_data.db')
+KLINE_DB = str(Path.home() / 'Jarvis' / 'ai_trading' / 'kline_data.db')
 
 
 def detect_technical_signals(recs: list[dict]) -> tuple[list[TechnicalSignal], list[RiskFactor]]:
@@ -214,7 +215,7 @@ def get_kline_records(code: str, conn: sqlite3.Connection, days: int = 400) -> l
     """从kline_daily表获取K线数据"""
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT date, open, close, high, low, volume FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT ?",
+        "SELECT date, open, close, high, low, volume FROM kline.kline_daily WHERE code=? ORDER BY date DESC LIMIT ?",
         (code, days)
     ).fetchall()
     result = []

@@ -1,7 +1,7 @@
 <template>
     <div class="ai-driven-page">
         <div class="page-header">
-            <h1>🤖 AI研报</h1>
+            <h1>🔍 AI检测</h1>
             <div class="header-actions">
                 <el-select v-model="scanIndex" size="small" style="width:120px;margin-right:8px" @change="switchIndex">
                     <el-option label="📊 全部指数" value="" />
@@ -458,12 +458,12 @@ async function loadByDate(dateStr) {
 async function triggerScan() {
     scanning.value = true
     browseDate.value = null
-    const idx = scanIndex.value || 'hs300'
     try {
-        const { data } = await axios.post(`${API}/scan?scan_type=${scanType.value}&index=${idx}`, {}, { timeout: 120000 })
+        // 策略驱动扫描：使用策略管理系统的所有策略 × 作用域
+        const { data } = await axios.post(`${API}/scan?scan_type=${scanType.value}&index=all`, {}, { timeout: 180000 })
         if (data.success) {
             report.value = data
-            scanIndex.value = idx
+            scanIndex.value = ''
             expanded.value = -1
             // 刷新今日概览
             await fetchTodaySummary()
@@ -511,9 +511,9 @@ onMounted(async () => {
     background: #1e1e3a !important;
 }
 .summary-grid {
-    display: flex;
-    gap: 16px;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
 }
 .summary-card {
     flex: 1;

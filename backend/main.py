@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 
 from backend.config import HOST, PORT, DEBUG
-from backend.routers import market, positions, analysis, risk, reports, fundamental, profile, watchlist, chat, stock_info, risk_rules, knowledge_graph, mental_models, predict, cron_history, news_overview, events, trading_plans, strategy_backtest, ai_driven
+from backend.routers import market, positions, analysis, risk, reports, fundamental, profile, watchlist, chat, stock_info, risk_rules, knowledge_graph, mental_models, predict, cron_history, news_overview, events, trading_plans, strategy_backtest, ai_driven, strategies, strategy_evol
 
 app = FastAPI(
     title="AI投研助手",
@@ -56,6 +56,8 @@ app.include_router(events.router, prefix="/api/v1", tags=["事件提醒"])
 app.include_router(trading_plans.router, prefix="/api/v1", tags=["交易计划"])
 app.include_router(strategy_backtest.router, prefix="/api/v1", tags=["策略回测"])
 app.include_router(ai_driven.router, prefix="", tags=["AI驱动投资"])
+app.include_router(strategies.router, prefix="/api/v1/strategies", tags=["策略研究"])
+app.include_router(strategy_evol.router, tags=["策略进化"])
 
 @app.get("/health")
 def health():
@@ -64,6 +66,19 @@ def health():
 @app.get("/api")
 def api_info():
     return {"service": "AI投研助手", "version": "0.1.0", "status": "running"}
+
+@app.get("/api/build-version")
+def get_build_version():
+    """返回当前前端构建版本（从 dist/version.json 读取）"""
+    vf = frontend_dist / "version.json"
+    if vf.exists():
+        import json
+        try:
+            return json.loads(vf.read_text())
+        except:
+            pass
+    return {"build_time": "unknown", "version": "dev"}
+
 
 # ========== 前端静态文件（兜底） ==========
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
